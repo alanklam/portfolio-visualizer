@@ -59,7 +59,6 @@ build/
 
 # Project Documentation
 instruction/
-*.md
 
 # Test Data - Personal Information
 test_data/
