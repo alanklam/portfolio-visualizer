@@ -1,225 +1,191 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Box, Paper, Typography, FormControl, Select, MenuItem, Grid } from '@mui/material';
 import Plot from 'react-plotly.js';
-import {
-  Box,
-  Card,
-  CardContent,
-  Typography,
-  ToggleButton,
-  ToggleButtonGroup,
-  Grid,
-  CircularProgress,
-  Alert,
-} from '@mui/material';
 
-const Charts = () => {
-  const [allocationData, setAllocationData] = useState(null);
-  const [performanceData, setPerformanceData] = useState(null);
-  const [returnsData, setReturnsData] = useState(null);
-  const [stats, setStats] = useState(null);
-  const [timeframe, setTimeframe] = useState('1Y');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+export function PieChart() {
+  const [data, setData] = useState(null);
 
-  const fetchChartData = async () => {
-    setLoading(true);
-    setError(null);
+  const fetchAllocationData = useCallback(async () => {
     try {
-      // Fetch all chart data in parallel
-      const [allocation, performance, returns, portfolioStats] = await Promise.all([
-        axios.get('/api/portfolio/allocation'),
-        axios.get(`/api/portfolio/performance?timeframe=${timeframe}`),
-        axios.get('/api/portfolio/annual-returns'),
-        axios.get('/api/portfolio/stats'),
-      ]);
-
-      setAllocationData(JSON.parse(allocation.data.data));
-      setPerformanceData(JSON.parse(performance.data.data));
-      setReturnsData(JSON.parse(returns.data.data));
-      setStats(portfolioStats.data);
-    } catch (err) {
-      setError('Failed to fetch chart data: ' + err.message);
-    } finally {
-      setLoading(false);
+      const response = await fetch('/api/portfolio/allocation');
+      const chartData = await response.json();
+      setData(chartData);
+    } catch (error) {
+      console.error('Failed to fetch allocation data:', error);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchChartData();
-  }, [timeframe]);
+    fetchAllocationData();
+  }, [fetchAllocationData]);
 
-  const handleTimeframeChange = (event, newTimeframe) => {
-    if (newTimeframe !== null) {
-      setTimeframe(newTimeframe);
-    }
-  };
-
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
-      </Box>
-    );
-  }
-
-  if (error) {
-    return (
-      <Box sx={{ p: 3 }}>
-        <Alert severity="error">{error}</Alert>
-      </Box>
-    );
-  }
+  if (!data) return null;
 
   return (
-    <Box sx={{ p: 3 }}>
-      {/* Portfolio Stats */}
-      {stats && (
-        <Grid container spacing={2} sx={{ mb: 4 }}>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography variant="subtitle2" color="textSecondary">
-                  Total Value
-                </Typography>
-                <Typography variant="h6">
-                  ${stats.total_value.toLocaleString()}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography variant="subtitle2" color="textSecondary">
-                  Total Return
-                </Typography>
-                <Typography variant="h6" color={stats.total_return >= 0 ? 'success.main' : 'error.main'}>
-                  {stats.total_return_pct.toFixed(2)}%
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography variant="subtitle2" color="textSecondary">
-                  Positions
-                </Typography>
-                <Typography variant="h6">
-                  {stats.num_positions}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography variant="subtitle2" color="textSecondary">
-                  Last Update
-                </Typography>
-                <Typography variant="h6">
-                  {new Date(stats.last_update).toLocaleDateString()}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-      )}
+    <Plot
+      data={[{
+        values: data.values,
+        labels: data.labels,
+        type: 'pie',
+        textinfo: 'label+percent',
+        hoverinfo: 'label+value+percent',
+        hole: 0.4
+      }]}
+      layout={{
+        showlegend: true,
+        legend: { orientation: 'h', y: -0.2 },
+        margin: { t: 0, b: 0, l: 0, r: 0 },
+        height: 300,
+        width: '100%'
+      }}
+      config={{ responsive: true }}
+    />
+  );
+}
 
-      {/* Performance Chart Timeframe Selector */}
-      <Box sx={{ mb: 4 }}>
-        <ToggleButtonGroup
-          value={timeframe}
-          exclusive
-          onChange={handleTimeframeChange}
-          aria-label="timeframe"
-          size="small"
-        >
-          <ToggleButton value="1M">1M</ToggleButton>
-          <ToggleButton value="3M">3M</ToggleButton>
-          <ToggleButton value="6M">6M</ToggleButton>
-          <ToggleButton value="1Y">1Y</ToggleButton>
-          <ToggleButton value="ALL">ALL</ToggleButton>
-        </ToggleButtonGroup>
+export function PerformanceChart() {
+  const [data, setData] = useState(null);
+  const [timeframe, setTimeframe] = useState('1Y');
+
+  const fetchPerformanceData = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/portfolio/performance?timeframe=${timeframe}`);
+      const chartData = await response.json();
+      setData(chartData);
+    } catch (error) {
+      console.error('Failed to fetch performance data:', error);
+    }
+  }, [timeframe]);
+
+  useEffect(() => {
+    fetchPerformanceData();
+  }, [fetchPerformanceData]);
+
+  if (!data) return null;
+
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h6">Portfolio Performance</Typography>
+        <FormControl size="small">
+          <Select
+            value={timeframe}
+            onChange={(e) => setTimeframe(e.target.value)}
+          >
+            <MenuItem value="1M">1 Month</MenuItem>
+            <MenuItem value="3M">3 Months</MenuItem>
+            <MenuItem value="6M">6 Months</MenuItem>
+            <MenuItem value="1Y">1 Year</MenuItem>
+            <MenuItem value="3Y">3 Years</MenuItem>
+            <MenuItem value="5Y">5 Years</MenuItem>
+            <MenuItem value="ALL">All Time</MenuItem>
+          </Select>
+        </FormControl>
       </Box>
+      <Plot
+        data={[
+          {
+            x: data.dates,
+            y: data.portfolio_values,
+            type: 'scatter',
+            mode: 'lines',
+            name: 'Portfolio Value',
+            line: { color: '#2196f3' }
+          },
+          {
+            x: data.dates,
+            y: data.cost_basis,
+            type: 'scatter',
+            mode: 'lines',
+            name: 'Cost Basis',
+            line: { color: '#9e9e9e', dash: 'dash' }
+          }
+        ]}
+        layout={{
+          showlegend: true,
+          legend: { orientation: 'h', y: -0.2 },
+          margin: { t: 0, b: 30, l: 60, r: 20 },
+          height: 300,
+          width: '100%',
+          yaxis: {
+            title: 'Value ($)',
+            tickformat: ',.0f'
+          }
+        }}
+        config={{ responsive: true }}
+      />
+    </Box>
+  );
+}
 
-      {/* Charts Grid */}
+export function AnnualReturnsChart() {
+  const [data, setData] = useState(null);
+
+  const fetchAnnualReturnsData = useCallback(async () => {
+    try {
+      const response = await fetch('/api/portfolio/annual-returns');
+      const chartData = await response.json();
+      setData(chartData);
+    } catch (error) {
+      console.error('Failed to fetch annual returns data:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAnnualReturnsData();
+  }, [fetchAnnualReturnsData]);
+
+  if (!data) return null;
+
+  return (
+    <Box>
+      <Typography variant="h6" gutterBottom>Annual Returns</Typography>
+      <Plot
+        data={[{
+          x: data.years,
+          y: data.returns,
+          type: 'bar',
+          marker: {
+            color: data.returns.map(value => value >= 0 ? '#4caf50' : '#f44336')
+          }
+        }]}
+        layout={{
+          margin: { t: 0, b: 30, l: 60, r: 20 },
+          height: 300,
+          width: '100%',
+          yaxis: {
+            title: 'Return (%)',
+            tickformat: '.1%'
+          }
+        }}
+        config={{ responsive: true }}
+      />
+    </Box>
+  );
+}
+
+function Charts() {
+  return (
+    <Box sx={{ mb: 4 }}>
       <Grid container spacing={3}>
-        {/* Portfolio Allocation */}
         <Grid item xs={12} md={6}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Portfolio Allocation
-              </Typography>
-              {allocationData && (
-                <Plot
-                  data={allocationData.data}
-                  layout={{
-                    ...allocationData.layout,
-                    showlegend: true,
-                    height: 400,
-                    margin: { t: 30, b: 30, l: 30, r: 30 },
-                  }}
-                  config={{ responsive: true }}
-                  style={{ width: '100%' }}
-                />
-              )}
-            </CardContent>
-          </Card>
+          <Paper sx={{ p: 2 }}>
+            <PieChart />
+          </Paper>
         </Grid>
-
-        {/* Performance Chart */}
-        <Grid item xs={12} md={6}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Portfolio Performance
-              </Typography>
-              {performanceData && (
-                <Plot
-                  data={performanceData.data}
-                  layout={{
-                    ...performanceData.layout,
-                    showlegend: true,
-                    height: 400,
-                    margin: { t: 30, b: 30, l: 50, r: 30 },
-                  }}
-                  config={{ responsive: true }}
-                  style={{ width: '100%' }}
-                />
-              )}
-            </CardContent>
-          </Card>
-        </Grid>
-
-        {/* Annual Returns */}
         <Grid item xs={12}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Annual Returns
-              </Typography>
-              {returnsData && (
-                <Plot
-                  data={returnsData.data}
-                  layout={{
-                    ...returnsData.layout,
-                    showlegend: false,
-                    height: 400,
-                    margin: { t: 30, b: 30, l: 50, r: 30 },
-                  }}
-                  config={{ responsive: true }}
-                  style={{ width: '100%' }}
-                />
-              )}
-            </CardContent>
-          </Card>
+          <Paper sx={{ p: 2 }}>
+            <PerformanceChart />
+          </Paper>
+        </Grid>
+        <Grid item xs={12}>
+          <Paper sx={{ p: 2 }}>
+            <AnnualReturnsChart />
+          </Paper>
         </Grid>
       </Grid>
     </Box>
   );
-};
+}
 
 export default Charts; 

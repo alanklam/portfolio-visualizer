@@ -23,7 +23,9 @@ class CSVParser:
         r'BOND',
         r'CERTIFICATE OF DEPOSIT',
         r'CD\s+\d',  # CD followed by numbers
-        r'GOVT\s+SECURITY'
+        r'GOVT\s+SECURITY',
+        r'INT',
+        r'INTEREST'
     ]
     
     FIXED_INCOME_ACTION_PATTERNS = [
@@ -101,15 +103,18 @@ class CSVParser:
         
         # Standardize column names
         df.columns = [col.strip('"') for col in df.columns]
-        
+
+        # Extract symbol from Description, if Symbol is missing
+        df.loc[df['Symbol'].isna(), 'Symbol'] = df['Description'].str.extract(r'\((\w+)\)')[0]
+
         # Extract option information from Description
         df['option_type'] = None
-        df.loc[df['Description'].str.contains(' C ', na=False), 'option_type'] = 'call'
-        df.loc[df['Description'].str.contains(' P ', na=False), 'option_type'] = 'put'
+        df.loc[df['Description'].str.contains('CALL|Call', na=False), 'option_type'] = 'call'
+        df.loc[df['Description'].str.contains('PUT|Put', na=False), 'option_type'] = 'put'
         
         # Handle security types
         df['security_type'] = 'stock'
-        df.loc[df['Description'].str.contains('PUT|CALL', na=False), 'security_type'] = 'option'
+        df.loc[df['Description'].str.contains('PUT|CALL|Put|Call|Option', na=False), 'security_type'] = 'option'
         
         # Handle fixed income securities with numeric symbols
         fixed_income_mask = df['Symbol'].apply(CSVParser.is_fixed_income_symbol)
@@ -150,22 +155,23 @@ class CSVParser:
             'Sell': 'sell',
             'Reinvest Shares': 'reinvest',
             'Reinvest Dividend': 'dividend',
-            'Assigned': 'assigned',
+            # 'Assigned': 'assigned',
             'Expired': 'expired',
             'Sell to Open': 'sell_to_open',
             'Buy to Open': 'buy_to_open',
             'Sell to Close': 'sell_to_close',
             'Buy to Close': 'buy_to_close',
             'Qualified Dividend': 'dividend',
-            'Bank Interest': 'interest',
+            'Qual Div Reinvest': 'dividend',
+            'Bond Interest': 'interest',
+            'Credit Interest': 'interest',
             'MoneyLink Transfer': 'transfer',
             'Stock Split': 'split'
         }
         
-        # Handle special cases for assignments
-        df['original_action'] = df['Action']
-        df.loc[(df['Action'] == 'Assigned') & (df['option_type'] == 'call'), 'Action'] = 'Sell'
-        df.loc[(df['Action'] == 'Assigned') & (df['option_type'] == 'put'), 'Action'] = 'Buy'
+        # # Handle special cases for assignments
+        # df.loc[(df['Action'] == 'Assigned') & (df['option_type'] == 'call'), 'Action'] = 'Sell'
+        # df.loc[(df['Action'] == 'Assigned') & (df['option_type'] == 'put'), 'Action'] = 'Buy'
         
         # Filter relevant transactions
         df = df[df['Action'].isin(list(action_map.keys()))]
@@ -175,12 +181,12 @@ class CSVParser:
             pd.to_numeric(df['Amount'].str.replace('$', '').str.replace(',', ''), errors='coerce').abs() / 
             pd.to_numeric(df['Quantity'].str.replace(',', ''), errors='coerce')
         )
-        
+
         # Handle interest and dividend transactions
-        df.loc[df['Action'].isin(['Bank Interest', 'Qualified Dividend']), 'Quantity'] = (
+        df.loc[df['Action'].isin(['Bond Interest', 'Credit Interest', 'Qualified Dividend', 'Qual Div Reinvest']), 'Quantity'] = (
             pd.to_numeric(df['Amount'].str.replace('$', '').str.replace(',', ''), errors='coerce')
         )
-        df.loc[df['Action'].isin(['Bank Interest', 'Qualified Dividend']), 'Price'] = 1.0
+        df.loc[df['Action'].isin(['Bond Interest', 'Credit Interest', 'Qualified Dividend', 'Qual Div Reinvest']), 'Price'] = 1.0
         
         # Convert quantity to numeric
         df['Quantity'] = pd.to_numeric(df['Quantity'].str.replace(',', ''), errors='coerce')
@@ -192,14 +198,14 @@ class CSVParser:
         # Map columns to standard format
         df_mapped = pd.DataFrame({
             'date': pd.to_datetime(df['Date'].str.split(' as of').str[0]),
-            'transaction_type': df['Action'].map(action_map),
-            'stock': df['Symbol'],
-            'units': df['Quantity'],
-            'price': pd.to_numeric(df['Price'].str.replace('$', '').str.replace(',', ''), errors='coerce'),
+            'transaction_type': df['Action'].map(action_map).fillna(''),
+            'stock': df['Symbol'].fillna(''),
+            'units': df['Quantity'].fillna(0),
+            'price': pd.to_numeric(df['Price'].str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0),
             'fee': pd.to_numeric(df['Fees & Comm'].str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0),
-            'security_type': df['security_type'],
-            'option_type': df['option_type'],
-            'amount': pd.to_numeric(df['Amount'].str.replace('$', '').str.replace(',', ''), errors='coerce')
+            'security_type': df['security_type'].fillna(''),
+            'option_type': df['option_type'].fillna(''),
+            'amount': pd.to_numeric(df['Amount'].str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0)
         })
         
         return df_mapped
@@ -296,14 +302,14 @@ class CSVParser:
         # Map columns to standard format
         df_mapped = pd.DataFrame({
             'date': pd.to_datetime(df['TransactionDate']),
-            'transaction_type': df['TransactionType'].map(lambda x: transaction_map.get(x, 'adjustment')),
-            'stock': df['Symbol'],
-            'units': df['Quantity'],
-            'price': pd.to_numeric(df['Price'], errors='coerce'),
+            'transaction_type': df['TransactionType'].map(lambda x: transaction_map.get(x, 'adjustment')).fillna(''),
+            'stock': df['Symbol'].fillna(''),
+            'units': df['Quantity'].fillna(0),
+            'price': pd.to_numeric(df['Price'], errors='coerce').fillna(0),
             'fee': pd.to_numeric(df['Commission'], errors='coerce').fillna(0),
-            'security_type': df['security_type'],
-            'option_type': df['Description'].str.extract(r'(\bCall|\bPut\b)', flags=re.IGNORECASE)[0].str.lower(),
-            'amount': pd.to_numeric(df['Amount'], errors='coerce')
+            'security_type': df['security_type'].fillna(''),
+            'option_type': df['Description'].str.extract(r'(\bCall|\bPut\b)', flags=re.IGNORECASE)[0].str.lower().fillna(''),
+            'amount': pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
         })
         
         return df_mapped
@@ -414,14 +420,14 @@ class CSVParser:
         # Map columns to standard format
         df_mapped = pd.DataFrame({
             'date': pd.to_datetime(df['Run Date']),
-            'transaction_type': df['Action'].apply(extract_transaction_type),
-            'stock': df['Symbol'],
-            'units': df['Quantity'],
-            'price': pd.to_numeric(df['Price ($)'], errors='coerce'),
+            'transaction_type': df['Action'].apply(extract_transaction_type).fillna(''),
+            'stock': df['Symbol'].fillna(''),
+            'units': df['Quantity'].fillna(0),
+            'price': pd.to_numeric(df['Price ($)'], errors='coerce').fillna(0),
             'fee': pd.to_numeric(df['Commission ($)'], errors='coerce').fillna(0),
-            'security_type': df['security_type'],
-            'option_type': df['Description'].str.extract(r'(\bCall|\bPut\b)', flags=re.IGNORECASE)[0].str.lower(),
-            'amount': pd.to_numeric(df['Amount ($)'], errors='coerce')
+            'security_type': df['security_type'].fillna(''),
+            'option_type': df['Description'].str.extract(r'(\bCall|\bPut\b)', flags=re.IGNORECASE)[0].str.lower().fillna(''),
+            'amount': pd.to_numeric(df['Amount ($)'], errors='coerce').fillna(0)
         })
         
         # Filter out non-trade transactions

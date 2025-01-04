@@ -241,137 +241,8 @@ class FinanceCalculator:
                 holdings[symbol]['last_price'] = price
                 holdings[symbol]['last_update'] = datetime.now()
         
-        return holdings 
+        return holdings
     
-    @staticmethod
-    def calculate_adjusted_cost_basis(transactions: pd.DataFrame, symbol: str) -> Dict[str, float]:
-        """
-        Calculate the adjusted cost basis for a stock, accounting for:
-        - Partial sales (gains decrease cost basis, losses increase it)
-        - Non-reinvested dividends (decrease cost basis)
-        - Option gains/losses on the same stock
-        - Interest from related fixed income securities
-        
-        For cash and fixed income securities, adjusted cost basis is set equal to cost basis.
-        
-        Args:
-            transactions: DataFrame with standardized transaction data
-            symbol: Stock symbol to calculate for
-        
-        Returns:
-            Dictionary containing total and adjusted cost basis information
-        """
-        # Filter transactions for the specific symbol
-        stock_txns = transactions[transactions['stock'] == symbol].sort_values('date')
-        
-        result = {
-            'total_cost_basis': 0.0,      # Original cost basis from buys
-            'adjusted_cost_basis': 0.0,    # Adjusted after sales, dividends, etc.
-            'total_units': 0.0,            # Current total units
-            'realized_gain_loss': 0.0,     # Total realized gain/loss
-            'option_gain_loss': 0.0,       # Total gain/loss from options
-            'dividend_income': 0.0,        # Total dividend income
-            'last_price': 0.0,             # Most recent transaction price
-            'last_update': None            # Date of last transaction
-        }
-        
-        # For cash and fixed income, set adjusted cost basis equal to cost basis
-        if symbol in ['CASH EQUIVALENTS', 'FIXED INCOME']:
-            running_units = 0.0
-            running_cost = 0.0
-            
-            for _, txn in stock_txns.iterrows():
-                units = float(txn['units']) if pd.notna(txn['units']) else 0
-                price = float(txn['price']) if pd.notna(txn['price']) else 0
-                
-                if txn['transaction_type'] in ['buy', 'reinvest', 'transfer']:
-                    running_cost += units * price
-                    running_units += units
-                elif txn['transaction_type'] == 'sell':
-                    running_cost -= units * price
-                    running_units -= units
-                
-                # Update last price and date
-                if price > 0:
-                    result['last_price'] = price
-                    result['last_update'] = txn['date']
-            
-            result['total_units'] = running_units
-            result['total_cost_basis'] = running_cost
-            result['adjusted_cost_basis'] = running_cost  # Set equal to cost basis
-            return result
-        
-        # For stocks and other securities, calculate adjusted cost basis
-        running_units = 0.0
-        running_cost = 0.0
-        
-        # Process each transaction chronologically
-        for _, txn in stock_txns.iterrows():
-            txn_type = txn['transaction_type']
-            units = float(txn['units']) if pd.notna(txn['units']) else 0
-            price = float(txn['price']) if pd.notna(txn['price']) else 0
-            
-            if txn_type == 'buy' or txn_type == 'reinvest':
-                # Add to total cost basis
-                running_cost += units * price
-                running_units += units
-                result['total_cost_basis'] += units * price
-                
-            elif txn_type == 'sell':
-                if running_units > 0:
-                    # Calculate gain/loss for this sale
-                    avg_cost = running_cost / running_units
-                    sale_proceeds = units * price
-                    cost_of_sold = units * avg_cost
-                    gain_loss = sale_proceeds - cost_of_sold
-                    
-                    # Update realized gain/loss
-                    result['realized_gain_loss'] += gain_loss
-                    
-                    # Adjust the running cost proportionally
-                    running_cost = avg_cost * (running_units - units)
-                    running_units -= units
-                    
-                    # Adjust cost basis based on gain/loss
-                    if running_units > 0:
-                        # Only adjust if we still have a position
-                        result['adjusted_cost_basis'] = running_cost - gain_loss
-            
-            elif txn_type == 'dividend' and not txn_type == 'reinvest':
-                # Non-reinvested dividends decrease the cost basis
-                result['dividend_income'] += units * price
-                if running_units > 0:
-                    result['adjusted_cost_basis'] = running_cost - (units * price)
-            
-            # Update last price and date
-            if price > 0:
-                result['last_price'] = price
-                result['last_update'] = txn['date']
-        
-        # Get option transactions for this symbol
-        option_txns = transactions[
-            (transactions['security_type'] == 'option') & 
-            (transactions['stock'] == symbol)
-        ]
-        
-        # Calculate option gains/losses
-        for _, txn in option_txns.iterrows():
-            if txn['transaction_type'] in ['sell_to_open', 'sell_to_close', 'buy_to_open', 'buy_to_close']:
-                multiplier = 1 if txn['transaction_type'] in ['sell_to_open', 'sell_to_close'] else -1
-                option_gain = multiplier * (abs(txn['amount']) if pd.notna(txn['amount']) else (txn['units'] * txn['price'] - txn['fee']))
-                result['option_gain_loss'] += option_gain
-                
-                # Adjust the cost basis if we still have a position
-                if running_units > 0:
-                    result['adjusted_cost_basis'] = running_cost - option_gain
-        
-        # Set final values
-        result['total_units'] = running_units
-        if running_units > 0:
-            result['total_cost_basis'] = running_cost
-            
-        return result
-
     @staticmethod
     def calculate_gain_loss(transactions: pd.DataFrame, current_prices: Dict[str, float] = None) -> Dict[str, Dict[str, Any]]:
         """
@@ -438,6 +309,12 @@ class FinanceCalculator:
             market_value = current_holding['units'] * current_holding['last_price']
             unrealized_gain_loss = market_value - total_cost_basis if current_holding['units'] > 0 else 0
             
+            # For cash and fixed income, adjusted cost basis equals total cost basis
+            adjusted_cost_basis = total_cost_basis
+            if symbol not in ['CASH EQUIVALENTS', 'FIXED INCOME']:
+                # For stocks, adjust cost basis based on realized gains/losses, dividends, and options
+                adjusted_cost_basis = total_cost_basis - realized_gain_loss - dividend_income - option_gain_loss
+            
             # Calculate total return
             total_return = realized_gain_loss + unrealized_gain_loss + dividend_income + option_gain_loss
             
@@ -446,7 +323,7 @@ class FinanceCalculator:
                 'current_units': current_holding['units'],
                 'market_value': market_value,
                 'total_cost_basis': total_cost_basis,
-                'adjusted_cost_basis': total_cost_basis - realized_gain_loss - dividend_income - option_gain_loss,
+                'adjusted_cost_basis': adjusted_cost_basis,
                 'realized_gain_loss': realized_gain_loss,
                 'unrealized_gain_loss': unrealized_gain_loss,
                 'unrealized_gain_loss_pct': (unrealized_gain_loss / total_cost_basis * 100) if total_cost_basis > 0 else 0,
