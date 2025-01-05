@@ -16,6 +16,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 import { PieChart } from './Charts';
+import { getHeaders, handleApiError } from '../services/userService';
 
 function Portfolio() {
   const [holdings, setHoldings] = useState([]);
@@ -25,14 +26,13 @@ function Portfolio() {
 
   const fetchHoldings = useCallback(async () => {
     try {
-      const response = await fetch('/api/portfolio/holdings');
-      if (!response.ok) {
-        throw new Error('Failed to fetch holdings');
-      }
-      const data = await response.json();
+      const response = await fetch('/api/portfolio/holdings', {
+        headers: getHeaders()
+      });
+      const data = await handleApiError(response);
       setHoldings(Array.isArray(data) ? data : []);
     } catch (error) {
-      setError('Failed to fetch holdings');
+      setError(error.message);
       setHoldings([]);
     } finally {
       setLoading(false);
@@ -41,7 +41,9 @@ function Portfolio() {
 
   const fetchGainLoss = useCallback(async () => {
     try {
-      const response = await fetch('/api/portfolio/gain-loss');
+      const response = await fetch('/api/portfolio/gain-loss', {
+        headers: getHeaders()
+      });
       if (!response.ok) {
         throw new Error('Failed to fetch gain/loss data');
       }
@@ -69,6 +71,20 @@ function Portfolio() {
     return `${((value || 0) * 100).toFixed(2)}%`;
   };
 
+  const calculateTotals = (gainLossData) => {
+    return Object.values(gainLossData).reduce((totals, holding) => {
+      return {
+        total_value: (totals.total_value || 0) + holding.market_value,
+        total_cost: (totals.total_cost || 0) + holding.total_cost_basis,
+        total_gain_loss: (totals.total_gain_loss || 0) + holding.total_return,
+        realized_gain_loss: (totals.realized_gain_loss || 0) + holding.realized_gain_loss,
+        unrealized_gain_loss: (totals.unrealized_gain_loss || 0) + holding.unrealized_gain_loss,
+        dividend_income: (totals.dividend_income || 0) + holding.dividend_income,
+        option_gain_loss: (totals.option_gain_loss || 0) + holding.option_gain_loss
+      };
+    }, {});
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
@@ -76,6 +92,8 @@ function Portfolio() {
       </Box>
     );
   }
+
+  const totals = calculateTotals(gainLoss);
 
   return (
     <Box sx={{ p: 3 }}>
@@ -94,7 +112,7 @@ function Portfolio() {
                 Total Value
               </Typography>
               <Typography variant="h5">
-                {formatCurrency(gainLoss.total_value)}
+                {formatCurrency(totals.total_value)}
               </Typography>
             </CardContent>
           </Card>
@@ -105,8 +123,8 @@ function Portfolio() {
               <Typography color="textSecondary" gutterBottom>
                 Total Return
               </Typography>
-              <Typography variant="h5" color={gainLoss.total_return >= 0 ? 'success.main' : 'error.main'}>
-                {formatCurrency(gainLoss.total_return)}
+              <Typography variant="h5" color={totals.total_gain_loss >= 0 ? 'success.main' : 'error.main'}>
+                {formatCurrency(totals.total_gain_loss)}
               </Typography>
             </CardContent>
           </Card>
@@ -117,8 +135,8 @@ function Portfolio() {
               <Typography color="textSecondary" gutterBottom>
                 Unrealized Gain/Loss
               </Typography>
-              <Typography variant="h5" color={gainLoss.unrealized_gain_loss >= 0 ? 'success.main' : 'error.main'}>
-                {formatCurrency(gainLoss.unrealized_gain_loss)}
+              <Typography variant="h5" color={totals.unrealized_gain_loss >= 0 ? 'success.main' : 'error.main'}>
+                {formatCurrency(totals.unrealized_gain_loss)}
               </Typography>
             </CardContent>
           </Card>
@@ -130,7 +148,7 @@ function Portfolio() {
                 Dividend Income
               </Typography>
               <Typography variant="h5" color="success.main">
-                {formatCurrency(gainLoss.dividend_income)}
+                {formatCurrency(totals.dividend_income)}
               </Typography>
             </CardContent>
           </Card>
@@ -153,28 +171,28 @@ function Portfolio() {
                 <TableBody>
                   <TableRow>
                     <TableCell>Total Return</TableCell>
-                    <TableCell align="right">{formatCurrency(gainLoss.total_return)}</TableCell>
-                    <TableCell align="right">{formatPercent(gainLoss.total_return_percent)}</TableCell>
+                    <TableCell align="right">{formatCurrency(totals.total_gain_loss)}</TableCell>
+                    <TableCell align="right">{formatPercent(totals.total_gain_loss / totals.total_cost)}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Realized Gain/Loss</TableCell>
-                    <TableCell align="right">{formatCurrency(gainLoss.realized_gain_loss)}</TableCell>
-                    <TableCell align="right">{formatPercent(gainLoss.realized_gain_loss_percent)}</TableCell>
+                    <TableCell align="right">{formatCurrency(totals.realized_gain_loss)}</TableCell>
+                    <TableCell align="right">{formatPercent(totals.realized_gain_loss / totals.total_cost)}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Unrealized Gain/Loss</TableCell>
-                    <TableCell align="right">{formatCurrency(gainLoss.unrealized_gain_loss)}</TableCell>
-                    <TableCell align="right">{formatPercent(gainLoss.unrealized_gain_loss_percent)}</TableCell>
+                    <TableCell align="right">{formatCurrency(totals.unrealized_gain_loss)}</TableCell>
+                    <TableCell align="right">{formatPercent(totals.unrealized_gain_loss / totals.total_cost)}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Dividend Income</TableCell>
-                    <TableCell align="right">{formatCurrency(gainLoss.dividend_income)}</TableCell>
-                    <TableCell align="right">{formatPercent(gainLoss.dividend_yield)}</TableCell>
+                    <TableCell align="right">{formatCurrency(totals.dividend_income)}</TableCell>
+                    <TableCell align="right">{formatPercent(totals.dividend_income / totals.total_cost)}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Option Gains/Losses</TableCell>
-                    <TableCell align="right">{formatCurrency(gainLoss.option_gain_loss)}</TableCell>
-                    <TableCell align="right">{formatPercent(gainLoss.option_gain_loss_percent)}</TableCell>
+                    <TableCell align="right">{formatCurrency(totals.option_gain_loss)}</TableCell>
+                    <TableCell align="right">{formatPercent(totals.option_gain_loss / totals.total_cost)}</TableCell>
                   </TableRow>
                 </TableBody>
               </Table>

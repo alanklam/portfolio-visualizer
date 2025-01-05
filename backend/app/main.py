@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+from .database import engine
+from .models import Base
 
 # Configure logging
 logging.basicConfig(
@@ -38,6 +40,9 @@ from .routers import upload, portfolio, user_settings
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
 app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"])
 app.include_router(user_settings.router, prefix="/api/settings", tags=["settings"])
+
+# Create database tables
+Base.metadata.create_all(bind=engine)
 
 @app.get("/")
 async def root():

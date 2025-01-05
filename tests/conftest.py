@@ -115,3 +115,24 @@ def combined_broker_data(real_transaction_files):
             combined_data[broker] = '\n'.join(combined_content)
     
     return combined_data 
+
+@pytest.fixture
+def test_user():
+    return {
+        "id": 1,
+        "email": "test@example.com",
+        "username": "testuser"
+    }
+
+@pytest.fixture
+def override_get_current_user():
+    """Override the get_current_user dependency"""
+    from backend.app.dependencies import get_current_user
+    from backend.app.models import User
+    
+    async def mock_get_current_user():
+        return User(id=1, email="test@example.com", username="testuser")
+    
+    app.dependency_overrides[get_current_user] = mock_get_current_user
+    yield
+    app.dependency_overrides = {} 

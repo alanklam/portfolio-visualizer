@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, date
 
 class FileUpload(BaseModel):
     """Schema for file upload request"""
@@ -9,7 +9,7 @@ class FileUpload(BaseModel):
 
 class Transaction(BaseModel):
     """Schema for a single transaction"""
-    date: datetime
+    date: date
     symbol: str
     security_type: str
     transaction_type: str
@@ -31,14 +31,19 @@ class PortfolioHolding(BaseModel):
 
 class GainLoss(BaseModel):
     """Schema for gain/loss analysis"""
-    total_value: float
-    total_cost: float
-    total_gain_loss: float
+    current_units: float
+    market_value: float
+    total_cost_basis: float
+    adjusted_cost_basis: float
     realized_gain_loss: float
     unrealized_gain_loss: float
+    unrealized_gain_loss_pct: float
     dividend_income: float
-    option_income: float
-    total_return_percent: float
+    option_gain_loss: float
+    total_return: float
+    total_return_pct: float
+    last_price: float
+    last_update: datetime
 
 class ChartData(BaseModel):
     """Schema for chart data"""

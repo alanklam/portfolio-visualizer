@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Box, Paper, Typography, FormControl, Select, MenuItem, Grid } from '@mui/material';
 import Plot from 'react-plotly.js';
+import { getHeaders } from '../services/userService';
 
 export function PieChart() {
   const [data, setData] = useState(null);
 
   const fetchAllocationData = useCallback(async () => {
     try {
-      const response = await fetch('/api/portfolio/allocation');
+      const response = await fetch('/api/portfolio/allocation', {
+        headers: getHeaders()
+      });
       const chartData = await response.json();
       setData(chartData);
     } catch (error) {

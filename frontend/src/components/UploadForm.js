@@ -13,6 +13,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import { getHeaders } from '../services/userService';
 
 function UploadForm() {
   const [files, setFiles] = useState([]);
@@ -57,6 +58,7 @@ function UploadForm() {
     try {
       const response = await fetch('/api/upload', {
         method: 'POST',
+        headers: getHeaders(),
         body: formData,
       });
 

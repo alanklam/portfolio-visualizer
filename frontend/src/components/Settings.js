@@ -14,6 +14,7 @@ import {
   Alert,
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
+import { getHeaders } from '../services/userService';
 
 function Settings() {
   const [holdings, setHoldings] = useState([]);
@@ -23,7 +24,9 @@ function Settings() {
 
   const fetchHoldings = useCallback(async () => {
     try {
-      const response = await fetch('/api/portfolio/holdings');
+      const response = await fetch('/api/portfolio/holdings', {
+        headers: getHeaders()
+      });
       const data = await response.json();
       setHoldings(data);
       
@@ -40,7 +43,9 @@ function Settings() {
 
   const fetchTargetWeights = useCallback(async () => {
     try {
-      const response = await fetch('/api/settings');
+      const response = await fetch('/api/settings', {
+        headers: getHeaders()
+      });
       const data = await response.json();
       setTargetWeights(data.target_weights || {});
     } catch (error) {
@@ -74,7 +79,10 @@ function Settings() {
     try {
       await fetch('/api/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getHeaders(),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           target_weights: Object.fromEntries(
             Object.entries(targetWeights).map(([k, v]) => [k, v / 100])

@@ -1,6 +1,6 @@
 from typing import Dict, List
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 import numpy as np
 
 class DataProcessor:
@@ -25,17 +25,19 @@ class DataProcessor:
     CASH_AFFECTING_TYPES = ['dividend', 'interest', 'transfer']
     
     @staticmethod
-    def standardize_dates(date_str: str, format: str = None) -> datetime:
+    def standardize_dates(date_str: str, format: str = None) -> date:
         """Convert dates to standard format"""
         try:
             if format:
-                return pd.to_datetime(date_str, format=format)
-            return pd.to_datetime(date_str)
+                dt = pd.to_datetime(date_str, format=format)
+            else:
+                dt = pd.to_datetime(date_str)
+            return dt.date()
         except ValueError as e:
             # Try to handle "as of" dates
             try:
                 date_str = date_str.split(' as of')[0]
-                return pd.to_datetime(date_str)
+                return pd.to_datetime(date_str).date()
             except:
                 raise ValueError(f"Failed to parse date {date_str}: {str(e)}")
 

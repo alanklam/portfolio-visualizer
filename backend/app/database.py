@@ -3,11 +3,15 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-# Create database directory if it doesn't exist
-os.makedirs('database', exist_ok=True)
+# Get the root directory (two levels up from this file)
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Create database URL
-SQLALCHEMY_DATABASE_URL = "sqlite:///./database/sqlite.db"
+# Create database directory if it doesn't exist
+db_dir = os.path.join(ROOT_DIR, 'database')
+os.makedirs(db_dir, exist_ok=True)
+
+# Create database URL - using absolute path
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(db_dir, 'sqlite.db')}"
 
 # Create engine
 engine = create_engine(

@@ -197,7 +197,7 @@ class CSVParser:
 
         # Map columns to standard format
         df_mapped = pd.DataFrame({
-            'date': pd.to_datetime(df['Date'].str.split(' as of').str[0]),
+            'date': pd.to_datetime(df['Date'].str.split(' as of').str[0]).dt.date,
             'transaction_type': df['Action'].map(action_map).fillna(''),
             'stock': df['Symbol'].fillna(''),
             'units': df['Quantity'].fillna(0),

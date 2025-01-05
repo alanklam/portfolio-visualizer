@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional, Any
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import yfinance as yf
 import warnings
 
@@ -16,25 +16,19 @@ class FinanceCalculator:
     }
     
     @staticmethod
-    def calculate_stock_holdings(transactions: pd.DataFrame, as_of_date: datetime = None) -> Dict[str, Dict[str, Any]]:
-        """
-        Calculate current stock holdings based on transaction history.
+    def calculate_stock_holdings(transactions: pd.DataFrame, as_of_date: date = None) -> Dict[str, Dict[str, float]]:
+        """Calculate current stock holdings based on transaction history."""
+        if transactions.empty:
+            return {}
         
-        Args:
-            transactions: DataFrame with standardized transaction data
-            as_of_date: Optional date to calculate holdings as of that date
-        
-        Returns:
-            Dictionary with stock symbols as keys and their holdings information as values
-        """
         if as_of_date is None:
-            as_of_date = datetime.now()
+            as_of_date = datetime.now().date()
         
         # Filter transactions up to as_of_date
-        transactions = transactions[transactions['date'] <= as_of_date].copy()
+        transactions = transactions[pd.to_datetime(transactions['date']).dt.date <= as_of_date].copy()
         
-        # Initialize holdings dictionary
         holdings = {}
+        total_market_value = 0.0
         
         # Initialize cash position
         holdings['CASH EQUIVALENTS'] = {
@@ -120,6 +114,20 @@ class FinanceCalculator:
         
         # Remove positions with zero units
         holdings = {k: v for k, v in holdings.items() if v['units'] != 0 or k == 'CASH EQUIVALENTS'}
+        
+        # Calculate total market value for weight calculation
+        for symbol, data in holdings.items():
+            market_value = float(data['units']) * float(data['last_price'])
+            total_market_value += market_value
+            data['market_value'] = market_value
+        
+        # Add weight to each holding
+        for data in holdings.values():
+            data['weight'] = (data['market_value'] / total_market_value) if total_market_value > 0 else 0.0
+            
+            # Ensure all numeric values are float
+            for key in ['units', 'cost_basis', 'last_price', 'market_value', 'weight']:
+                data[key] = float(data[key])
         
         return holdings
     
