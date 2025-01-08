@@ -1,20 +1,19 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Enum, UniqueConstraint
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
-
-Base = declarative_base()
+from .database import Base
+from datetime import datetime
 
 class User(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, unique=True, index=True, nullable=False)
-    created_at = Column(Date, nullable=False)
+    username = Column(String, unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     # Relationships
-    transactions = relationship("Transaction", back_populates="user")
-    portfolio = relationship("Portfolio", back_populates="user")
-    settings = relationship("UserSettings", back_populates="user")
+    transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")
+    portfolio = relationship("Portfolio", back_populates="user", cascade="all, delete-orphan")
+    settings = relationship("UserSettings", back_populates="user", cascade="all, delete-orphan")
 
 class Transaction(Base):
     __tablename__ = "transactions"

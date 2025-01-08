@@ -14,8 +14,12 @@ import {
   CardContent,
   Alert,
   CircularProgress,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
 } from '@mui/material';
-import { PieChart } from './Charts';
+import { PieChart, PerformanceChart, AnnualReturnsChart } from './Charts';
 import { getHeaders, handleApiError } from '../services/userService';
 
 function Portfolio() {
@@ -23,6 +27,7 @@ function Portfolio() {
   const [gainLoss, setGainLoss] = useState({});
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [timeframe, setTimeframe] = useState('1Y');
 
   const fetchHoldings = useCallback(async () => {
     try {
@@ -155,14 +160,17 @@ function Portfolio() {
         </Grid>
       </Grid>
 
-      {/* Portfolio Allocation Chart */}
+      {/* Charts Section */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
+        {/* Portfolio Allocation */}
         <Grid item xs={12} md={6}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="h6" gutterBottom>Portfolio Allocation</Typography>
             <PieChart />
           </Paper>
         </Grid>
+
+        {/* Gain/Loss Analysis */}
         <Grid item xs={12} md={6}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="h6" gutterBottom>Gain/Loss Analysis</Typography>
@@ -197,6 +205,38 @@ function Portfolio() {
                 </TableBody>
               </Table>
             </TableContainer>
+          </Paper>
+        </Grid>
+
+        {/* Performance Chart */}
+        <Grid item xs={12}>
+          <Paper sx={{ p: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6">Portfolio Performance</Typography>
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <InputLabel>Timeframe</InputLabel>
+                <Select
+                  label="Timeframe"
+                  value={timeframe}
+                  onChange={(e) => setTimeframe(e.target.value)}
+                >
+                  <MenuItem value="1M">1 Month</MenuItem>
+                  <MenuItem value="3M">3 Months</MenuItem>
+                  <MenuItem value="6M">6 Months</MenuItem>
+                  <MenuItem value="1Y">1 Year</MenuItem>
+                  <MenuItem value="ALL">All Time</MenuItem>
+                </Select>
+              </FormControl>
+            </Box>
+            <PerformanceChart timeframe={timeframe} />
+          </Paper>
+        </Grid>
+
+        {/* Annual Returns Chart */}
+        <Grid item xs={12}>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="h6" gutterBottom>Annual Returns</Typography>
+            <AnnualReturnsChart />
           </Paper>
         </Grid>
       </Grid>

@@ -5,12 +5,13 @@ pandas==2.1.4
 yfinance==0.2.33
 sqlalchemy==2.0.23
 aiofiles==23.2.1
-python-jose==3.3.0
+python-jose[cryptography]==3.3.0
 passlib==1.7.4
 bcrypt==4.1.2
 pydantic==2.5.2
 plotly==5.18.0
 py2app==0.28.6
+PyJWT==2.8.0
 
 # Testing dependencies
 pytest==7.4.3

@@ -1,121 +1,133 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Paper, Typography, FormControl, Select, MenuItem, Grid } from '@mui/material';
+import React, { useState, useEffect } from 'react';
 import Plot from 'react-plotly.js';
-import { getHeaders } from '../services/userService';
+import { Box, CircularProgress, Select, MenuItem, FormControl, InputLabel } from '@mui/material';
+import { getHeaders, handleApiError } from '../services/userService';
 
 export function PieChart() {
   const [data, setData] = useState(null);
-
-  const fetchAllocationData = useCallback(async () => {
-    try {
-      const response = await fetch('/api/portfolio/allocation', {
-        headers: getHeaders()
-      });
-      const chartData = await response.json();
-      setData(chartData);
-    } catch (error) {
-      console.error('Failed to fetch allocation data:', error);
-    }
-  }, []);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchAllocationData();
-  }, [fetchAllocationData]);
+    const fetchData = async () => {
+      try {
+        const response = await fetch('/api/portfolio/allocation', {
+          headers: getHeaders()
+        });
+        const result = await handleApiError(response);
+        const chartData = JSON.parse(result.data);
+        setData([{
+          values: chartData.values,
+          labels: chartData.labels,
+          type: 'pie',
+          textinfo: 'label+percent',
+          hoverinfo: 'label+value+percent',
+          hole: 0.4
+        }]);
+      } catch (error) {
+        console.error('Error fetching allocation data:', error);
+        setData([]);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  if (!data) return null;
+    fetchData();
+  }, []);
+
+  if (loading) {
+    return <CircularProgress />;
+  }
 
   return (
-    <Plot
-      data={[{
-        values: data.values,
-        labels: data.labels,
-        type: 'pie',
-        textinfo: 'label+percent',
-        hoverinfo: 'label+value+percent',
-        hole: 0.4
-      }]}
-      layout={{
-        showlegend: true,
-        legend: { orientation: 'h', y: -0.2 },
-        margin: { t: 0, b: 0, l: 0, r: 0 },
-        height: 300,
-        width: '100%'
-      }}
-      config={{ responsive: true }}
-    />
+    <Box sx={{ height: '400px', width: '100%' }}>
+      <Plot
+        data={data}
+        layout={{
+          showlegend: true,
+          legend: { orientation: 'h', y: -0.2 },
+          margin: { t: 30, b: 30, l: 30, r: 30 },
+          height: 400,
+          width: null
+        }}
+        config={{ responsive: true }}
+        style={{ width: '100%', height: '100%' }}
+      />
+    </Box>
   );
 }
 
-export function PerformanceChart() {
+export function PerformanceChart({ timeframe }) {
   const [data, setData] = useState(null);
-  const [timeframe, setTimeframe] = useState('1Y');
-
-  const fetchPerformanceData = useCallback(async () => {
-    try {
-      const response = await fetch(`/api/portfolio/performance?timeframe=${timeframe}`);
-      const chartData = await response.json();
-      setData(chartData);
-    } catch (error) {
-      console.error('Failed to fetch performance data:', error);
-    }
-  }, [timeframe]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchPerformanceData();
-  }, [fetchPerformanceData]);
-
-  if (!data) return null;
-
-  return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h6">Portfolio Performance</Typography>
-        <FormControl size="small">
-          <Select
-            value={timeframe}
-            onChange={(e) => setTimeframe(e.target.value)}
-          >
-            <MenuItem value="1M">1 Month</MenuItem>
-            <MenuItem value="3M">3 Months</MenuItem>
-            <MenuItem value="6M">6 Months</MenuItem>
-            <MenuItem value="1Y">1 Year</MenuItem>
-            <MenuItem value="3Y">3 Years</MenuItem>
-            <MenuItem value="5Y">5 Years</MenuItem>
-            <MenuItem value="ALL">All Time</MenuItem>
-          </Select>
-        </FormControl>
-      </Box>
-      <Plot
-        data={[
+    const fetchData = async () => {
+      try {
+        const response = await fetch(`/api/portfolio/performance?timeframe=${timeframe}`, {
+          headers: getHeaders()
+        });
+        const result = await handleApiError(response);
+        const chartData = JSON.parse(result.data);
+        setData([
           {
-            x: data.dates,
-            y: data.portfolio_values,
+            x: chartData.dates,
+            y: chartData.portfolio_value,
             type: 'scatter',
             mode: 'lines',
             name: 'Portfolio Value',
             line: { color: '#2196f3' }
           },
           {
-            x: data.dates,
-            y: data.cost_basis,
+            x: chartData.dates,
+            y: chartData.invested_amount,
             type: 'scatter',
             mode: 'lines',
-            name: 'Cost Basis',
-            line: { color: '#9e9e9e', dash: 'dash' }
+            name: 'Invested Amount',
+            line: { color: '#4caf50', dash: 'dash' }
           }
-        ]}
+        ]);
+      } catch (error) {
+        console.error('Error fetching performance data:', error);
+        setData([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [timeframe]);
+
+  if (loading) {
+    return <CircularProgress />;
+  }
+
+  return (
+    <Box sx={{ height: '400px', width: '100%' }}>
+      <Plot
+        data={data}
         layout={{
+          title: 'Portfolio Performance',
           showlegend: true,
           legend: { orientation: 'h', y: -0.2 },
-          margin: { t: 0, b: 30, l: 60, r: 20 },
-          height: 300,
-          width: '100%',
+          margin: { t: 50, b: 50, l: 50, r: 30 },
+          height: 400,
+          width: null,
+          xaxis: {
+            title: 'Date',
+            rangeslider: { visible: true }
+          },
           yaxis: {
             title: 'Value ($)',
             tickformat: ',.0f'
           }
         }}
-        config={{ responsive: true }}
+        config={{
+          responsive: true,
+          scrollZoom: true,
+          displayModeBar: true,
+          modeBarButtonsToAdd: ['zoom2d', 'pan2d', 'resetScale2d']
+        }}
+        style={{ width: '100%', height: '100%' }}
       />
     </Box>
   );
@@ -123,72 +135,59 @@ export function PerformanceChart() {
 
 export function AnnualReturnsChart() {
   const [data, setData] = useState(null);
-
-  const fetchAnnualReturnsData = useCallback(async () => {
-    try {
-      const response = await fetch('/api/portfolio/annual-returns');
-      const chartData = await response.json();
-      setData(chartData);
-    } catch (error) {
-      console.error('Failed to fetch annual returns data:', error);
-    }
-  }, []);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchAnnualReturnsData();
-  }, [fetchAnnualReturnsData]);
-
-  if (!data) return null;
-
-  return (
-    <Box>
-      <Typography variant="h6" gutterBottom>Annual Returns</Typography>
-      <Plot
-        data={[{
-          x: data.years,
-          y: data.returns,
+    const fetchData = async () => {
+      try {
+        const response = await fetch('/api/portfolio/annual-returns', {
+          headers: getHeaders()
+        });
+        const result = await handleApiError(response);
+        const chartData = JSON.parse(result.data);
+        setData([{
+          x: chartData.years,
+          y: chartData.returns,
           type: 'bar',
           marker: {
-            color: data.returns.map(value => value >= 0 ? '#4caf50' : '#f44336')
+            color: chartData.returns.map(value => value >= 0 ? '#4caf50' : '#f44336')
           }
-        }]}
+        }]);
+      } catch (error) {
+        console.error('Error fetching annual returns data:', error);
+        setData([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  if (loading) {
+    return <CircularProgress />;
+  }
+
+  return (
+    <Box sx={{ height: '400px', width: '100%' }}>
+      <Plot
+        data={data}
         layout={{
-          margin: { t: 0, b: 30, l: 60, r: 20 },
-          height: 300,
-          width: '100%',
+          title: 'Annual Returns',
+          showlegend: false,
+          margin: { t: 50, b: 50, l: 50, r: 30 },
+          height: 400,
+          width: null,
+          xaxis: { title: 'Year' },
           yaxis: {
             title: 'Return (%)',
-            tickformat: '.1%'
+            tickformat: '.1f',
+            ticksuffix: '%'
           }
         }}
         config={{ responsive: true }}
+        style={{ width: '100%', height: '100%' }}
       />
     </Box>
   );
-}
-
-function Charts() {
-  return (
-    <Box sx={{ mb: 4 }}>
-      <Grid container spacing={3}>
-        <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 2 }}>
-            <PieChart />
-          </Paper>
-        </Grid>
-        <Grid item xs={12}>
-          <Paper sx={{ p: 2 }}>
-            <PerformanceChart />
-          </Paper>
-        </Grid>
-        <Grid item xs={12}>
-          <Paper sx={{ p: 2 }}>
-            <AnnualReturnsChart />
-          </Paper>
-        </Grid>
-      </Grid>
-    </Box>
-  );
-}
-
-export default Charts; 
+} 

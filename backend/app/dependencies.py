@@ -1,27 +1,30 @@
-from fastapi import Depends, HTTPException, Header
-from sqlalchemy.orm import Session
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import jwt
 from .database import get_db
+from sqlalchemy.orm import Session
 from .models import User
-from datetime import datetime
-import uuid
+from .routers.auth import SECRET_KEY, ALGORITHM
+
+security = HTTPBearer()
 
 async def get_current_user(
-    user_id: str = Header(None, alias="X-User-ID"),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
-):
-    if not user_id:
-        # Generate a new user ID if none provided
-        user_id = str(uuid.uuid4())
-    
-    # Get or create user
-    user = db.query(User).filter(User.user_id == user_id).first()
-    if not user:
-        user = User(
-            user_id=user_id,
-            created_at=datetime.now().date()
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    
-    return user 
+) -> User:
+    try:
+        token = credentials.credentials
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid authentication token")
+        
+        user = db.query(User).filter(User.username == username).first()
+        if user is None:
+            raise HTTPException(status_code=401, detail="User not found")
+            
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.JWTError:
+        raise HTTPException(status_code=401, detail="Could not validate credentials") 

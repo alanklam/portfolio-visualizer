@@ -1,27 +1,26 @@
 {
-  "name": "portfolio-visualizer",
+  "name": "frontend",
   "version": "0.1.0",
   "private": true,
   "dependencies": {
     "@emotion/react": "^11.11.1",
     "@emotion/styled": "^11.11.0",
-    "@mui/icons-material": "^5.14.18",
-    "@mui/material": "^5.14.18",
+    "@mui/icons-material": "^5.15.1",
+    "@mui/material": "^5.15.1",
     "@testing-library/jest-dom": "^5.17.0",
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",
-    "axios": "^1.6.2",
-    "plotly.js": "^2.27.1",
+    "plotly.js": "^2.35.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-dropzone": "^14.2.3",
+    "react-dropzone": "^14.3.5",
     "react-plotly.js": "^2.6.0",
-    "react-router-dom": "^6.20.0",
+    "react-router-dom": "^6.21.0",
     "react-scripts": "5.0.1",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
-    "start": "DISABLE_ESLINT_PLUGIN=true PORT=3000 react-scripts start",
+    "start": "PORT=3000 react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
@@ -30,10 +29,7 @@
     "extends": [
       "react-app",
       "react-app/jest"
-    ],
-    "rules": {
-      "react-hooks/exhaustive-deps": "warn"
-    }
+    ]
   },
   "browserslist": {
     "production": [

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route, Link } from 'react-router-dom';
+import { Routes, Route, Link, Navigate, useNavigate } from 'react-router-dom';
 import {
   AppBar,
   Toolbar,
@@ -9,7 +9,13 @@ import {
   Button,
 } from '@mui/material';
 
-import { Portfolio, Settings, UploadForm } from './components';
+import { Portfolio, Settings, UploadForm, Login } from './components';
+
+// Protected Route wrapper component
+function ProtectedRoute({ children }) {
+  const token = localStorage.getItem('token');
+  return token ? children : <Navigate to="/login" />;
+}
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -47,6 +53,27 @@ class ErrorBoundary extends React.Component {
 }
 
 function App() {
+  const navigate = useNavigate();
+  const token = localStorage.getItem('token');
+  const username = localStorage.getItem('username');
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('username');
+    navigate('/login');
+  };
+
+  if (!token) {
+    return (
+      <ErrorBoundary>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="*" element={<Navigate to="/login" />} />
+        </Routes>
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <Box sx={{ flexGrow: 1 }}>
@@ -64,14 +91,35 @@ function App() {
             <Button color="inherit" component={Link} to="/settings">
               Settings
             </Button>
+            <Box sx={{ ml: 2, display: 'flex', alignItems: 'center' }}>
+              <Typography variant="body2" sx={{ mr: 2 }}>
+                {username}
+              </Typography>
+              <Button color="inherit" onClick={handleLogout}>
+                Logout
+              </Button>
+            </Box>
           </Toolbar>
         </AppBar>
 
         <Container maxWidth="lg" sx={{ mt: 4 }}>
           <Routes>
-            <Route path="/" element={<Portfolio />} />
-            <Route path="/upload" element={<UploadForm />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/" element={
+              <ProtectedRoute>
+                <Portfolio />
+              </ProtectedRoute>
+            } />
+            <Route path="/upload" element={
+              <ProtectedRoute>
+                <UploadForm />
+              </ProtectedRoute>
+            } />
+            <Route path="/settings" element={
+              <ProtectedRoute>
+                <Settings />
+              </ProtectedRoute>
+            } />
+            <Route path="/login" element={<Login />} />
           </Routes>
         </Container>
       </Box>

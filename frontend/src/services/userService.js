@@ -10,14 +10,24 @@ export const getUserId = () => {
   return userId;
 };
 
-export const getHeaders = () => ({
-  'X-User-ID': getUserId(),
-});
+export const getHeaders = () => {
+  const token = localStorage.getItem('token');
+  return {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+};
 
 export const handleApiError = async (response) => {
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || 'An error occurred');
+    if (response.status === 401) {
+      // Unauthorized, clear token and redirect to login
+      localStorage.removeItem('token');
+      localStorage.removeItem('username');
+      window.location.href = '/login';
+    }
+    const error = await response.json();
+    throw new Error(error.detail || 'API request failed');
   }
   return response.json();
 }; 
