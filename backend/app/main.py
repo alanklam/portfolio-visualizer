@@ -1,34 +1,37 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import portfolio, upload, auth
-from .database import init_db
-from .dependencies import get_current_user
+from .api.endpoints import analysis_routes, auth_routes, file_routes
+from .core.db import init_db
 
-app = FastAPI()
+app = FastAPI(title="Portfolio Visualizer API")
 
-# Initialize database tables
-init_db()
-
-# CORS middleware
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],  # In production, replace with specific origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Initialize database
+init_db()
+
 # Include routers
-app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(
-    portfolio.router,
-    prefix="/api/portfolio",
-    tags=["portfolio"],
-    dependencies=[Depends(get_current_user)]
+    auth_routes.router,
+    prefix="/api/auth",
+    tags=["auth"]
 )
+
 app.include_router(
-    upload.router,
-    prefix="/api/upload",
-    tags=["upload"],
-    dependencies=[Depends(get_current_user)]
+    analysis_routes.router,
+    prefix="/api/portfolio",
+    tags=["portfolio"]
+)
+
+app.include_router(
+    file_routes.router,
+    prefix="/api",
+    tags=["files"]
 ) 

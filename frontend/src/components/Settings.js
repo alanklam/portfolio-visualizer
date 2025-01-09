@@ -14,7 +14,7 @@ import {
   Alert,
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
-import { getHeaders } from '../services/userService';
+import { fetchHoldings, fetchSettings, updateSettings } from '../services/dataService';
 
 function Settings() {
   const [holdings, setHoldings] = useState([]);
@@ -22,12 +22,9 @@ function Settings() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
 
-  const fetchHoldings = useCallback(async () => {
+  const fetchHoldingsData = useCallback(async () => {
     try {
-      const response = await fetch('/api/portfolio/holdings', {
-        headers: getHeaders()
-      });
-      const data = await response.json();
+      const data = await fetchHoldings();
       setHoldings(data);
       
       // Initialize target weights with current weights if not set
@@ -43,10 +40,7 @@ function Settings() {
 
   const fetchTargetWeights = useCallback(async () => {
     try {
-      const response = await fetch('/api/settings', {
-        headers: getHeaders()
-      });
-      const data = await response.json();
+      const data = await fetchSettings();
       setTargetWeights(data.target_weights || {});
     } catch (error) {
       console.error('Failed to fetch target weights:', error);
@@ -54,9 +48,9 @@ function Settings() {
   }, []);
 
   useEffect(() => {
-    fetchHoldings();
+    fetchHoldingsData();
     fetchTargetWeights();
-  }, [fetchHoldings, fetchTargetWeights]);
+  }, [fetchHoldingsData, fetchTargetWeights]);
 
   const handleWeightChange = (symbol, value) => {
     setTargetWeights(prev => ({
@@ -77,17 +71,10 @@ function Settings() {
     }
 
     try {
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: {
-          ...getHeaders(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          target_weights: Object.fromEntries(
-            Object.entries(targetWeights).map(([k, v]) => [k, v / 100])
-          )
-        })
+      await updateSettings({
+        target_weights: Object.fromEntries(
+          Object.entries(targetWeights).map(([k, v]) => [k, v / 100])
+        )
       });
       setSuccess(true);
       setError(null);
