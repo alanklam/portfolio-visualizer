@@ -47,4 +47,8 @@ export const fetchSettings = () => {
 
 export const updateSettings = (weights) => {
     return apiClient.post('/api/portfolio/settings', weights);
+};
+
+export const fetchAnnualReturns = () => {
+    return apiClient.get('/api/portfolio/annual-returns');
 }; 

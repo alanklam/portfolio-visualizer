@@ -57,7 +57,8 @@ export const PerformanceChart = ({ data }) => {
             layout={{
                 showlegend: true,
                 height: 400,
-                margin: { t: 0, b: 40, l: 60, r: 20 },
+                width: 1200,
+                margin: { t: 0, b: 40, l: 160, r: 20 },
                 paper_bgcolor: 'transparent',
                 plot_bgcolor: 'transparent',
                 xaxis: {

@@ -109,18 +109,18 @@ class DataService:
             # Remove date patterns
             symbol = re.sub(r'[\s_]\d{2}/?[0-1]\d/?2?\d', '', symbol)
             symbol = re.sub(r'[\s_](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{4}', '', symbol, flags=re.IGNORECASE)
-            symbol = re.sub(r'\d{2}/\d{2}/\d{4}', '', symbol)
-            symbol = re.sub(r'\d{6}[CP]', '', symbol)
+            symbol = re.sub(r'\d{2}/\d{2}/\d{4}', '', symbol)  # MM/DD/YYYY format
+            symbol = re.sub(r'\d{6}[CP]', '', symbol)  # YYMMDD[C/P] format
             
             # Remove strike price and option type
             symbol = re.sub(r'[\s_][CP]\d+(\.\d+)?', '', symbol)
             symbol = re.sub(r'[\s_](Call|Put)', '', symbol, flags=re.IGNORECASE)
             symbol = re.sub(r'[\s_]\d+(\.\d+)?[\s_]?[CP]?', '', symbol)
             
-            # Remove trailing year numbers
+            # Remove any trailing year numbers (e.g. TSLA25 -> TSLA)
             symbol = re.sub(r'\d{2}$', '', symbol)
             
-            # Take only the first part
+            # Take only the first part (usually the underlying symbol)
             symbol = symbol.split()[0]
         
         return symbol.strip()
@@ -235,13 +235,16 @@ class DataService:
         except Exception as e:
             self.logger.error(f"Validation failed: {str(e)}")
             return False
-
+    
     def _process_schwab_transaction(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """Process Schwab transaction format"""
         # Extract symbol from Description if Symbol is missing
         symbol = str(row.get('Symbol', '')).strip()
-        if not symbol:
-            symbol = str(row.get('Description', '')).split('(')[-1].strip(')')  # Extract from Description if missing
+        if not symbol or symbol == '' or symbol == 'nan':
+            description = str(row.get('Description', ''))
+            match = re.search(r'\((.*?)\)', description)  # Use regex to find text within parentheses
+            if match:
+                symbol = match.group(1)  # Extract the first capturing group
 
         # Extract option information from Description
         option_type = None
@@ -253,7 +256,7 @@ class DataService:
 
         # Handle security types
         security_type = 'stock'
-        if 'option' in description:
+        if 'option' in description or 'call' in description or 'put' in description:
             security_type = 'option'
         elif self.is_fixed_income_symbol(symbol):
             security_type = 'fixed_income'
@@ -271,38 +274,50 @@ class DataService:
             security_type = 'cash'
             symbol = 'CASH EQUIVALENTS'
             price = 1.0
-            quantity = float(row.get('Quantity', 0)) if row.get('Quantity') else 0.0
+            quantity = float(row.get('Quantity', 0)) if pd.notna(row.get('Quantity')) else float(str(row.get('Amount', 0)).replace('$', '').replace(',', '')) if pd.notna(row.get('Amount')) else 0.0
         else:
-            price = float(str(row.get('Price', 0)).replace('$', '').replace(',', ''))
-            quantity = float(str(row.get('Quantity', 0)).replace(',', ''))
+            price = float(str(row.get('Price', 0)).replace('$', '').replace(',', '')) if pd.notna(row.get('Price')) else 0.0
+            quantity = float(str(row.get('Quantity', 0)).replace(',', '')) if pd.notna(row.get('Quantity')) else 0.0
 
         # Handle fixed income securities from description
         for pattern in self.FIXED_INCOME_PATTERNS:
             if re.search(pattern, description, re.IGNORECASE):
                 security_type = 'fixed_income'
                 symbol = 'FIXED INCOME'
+                # For interest payments only, set as cash
+                if re.search('INTEREST', description, re.IGNORECASE):
+                    security_type = 'cash'
+                    symbol = 'CASH EQUIVALENTS'
                 break
 
         # Handle interest and dividend transactions
         if row.get('Action') in ['Bond Interest', 'Credit Interest', 'Qualified Dividend', 'Qual Div Reinvest']:
-            quantity = float(str(row.get('Amount', 0)).replace('$', '').replace(',', ''))
+            quantity = float(str(row.get('Amount', 0)).replace('$', '').replace(',', '')) if pd.notna(row.get('Amount')) else 0.0
             price = 1.0  # Set price to 1.0 for interest/dividend transactions
+        
+        # Extract amount when price is missing
+        if pd.isna(price) and pd.notna(row.get('Amount')) and pd.notna(quantity):
+            price = abs(float(str(row.get('Amount', 0)).replace('$', '').replace(',', ''))) / quantity
 
         # Handle fixed income units conversion (divide by 100 for buy and sell transactions)
         if security_type == 'fixed_income' and row.get('Action') in ['Buy', 'Sell']:
             quantity /= 100
 
-        # Return the processed transaction
+        transaction_type = self.map_transaction_type(row['Action'])
+        if transaction_type == 'other':
+            return None  # Filter out transactions with type 'other'
+
+        # Return the processed transaction with default values
         return {
-            'date': self.standardize_dates(row['Date']),
+            'date': self.standardize_dates(row.get('Date', '')),
             'stock': symbol,
-            'transaction_type': self.map_transaction_type(row['Action']),
-            'units': quantity,
-            'price': price,
-            'fee': float(str(row.get('Fees & Comm', 0)).replace('$', '').replace(',', '')),
+            'transaction_type': transaction_type,
+            'units': quantity if pd.notna(quantity) else 0.0,
+            'price': price if pd.notna(price) else 0.0,
+            'fee': float(str(row.get('Fees & Comm', 0)).replace('$', '').replace(',', '')) if pd.notna(row.get('Fees & Comm')) else 0.0,
             'option_type': option_type,
             'security_type': security_type,
-            'amount': float(str(row.get('Amount', 0)).replace('$', '').replace(',', ''))
+            'amount': float(str(row.get('Amount', 0)).replace('$', '').replace(',', '')) if pd.notna(row.get('Amount')) else 0.0
         }
 
     def map_transaction_type(self, action: str) -> str:
@@ -381,17 +396,30 @@ class DataService:
             symbol = 'FIXED INCOME'
         elif security_type == 'cash':
             symbol = 'CASH EQUIVALENTS'
+            
+        # Extract option type
+        option_type = None
+        if 'call' in description:
+            option_type = 'call'
+        elif 'put' in description:
+            option_type = 'put'
+        
+        # Extract units, price, fee, and amount
+        units = abs(float(str(row.get('Quantity', 0)).replace(',', '')))
+        price = float(str(row.get('Price', 0)).replace('$', '').replace(',', ''))
+        fee = float(str(row.get('Commission', 0)).replace('$', '').replace(',', ''))
+        amount = float(str(row.get('Amount', 0)).replace('$', '').replace(',', ''))
         
         return {
             'date': self.standardize_dates(row['Date']),
             'stock': symbol,
             'transaction_type': transaction_type,
-            'units': abs(float(str(row.get('Quantity', 0)).replace(',', ''))),
-            'price': float(str(row.get('Price', 0)).replace('$', '').replace(',', '')),
-            'fee': float(str(row.get('Commission', 0)).replace('$', '').replace(',', '')),
-            'option_type': 'call' if 'call' in description else 'put' if 'put' in description else None,
+            'units': units,
+            'price': price,
+            'fee': fee,
+            'option_type': option_type,
             'security_type': security_type,
-            'amount': float(str(row.get('Amount', 0)).replace('$', '').replace(',', ''))
+            'amount': amount
         }
 
     def _process_etrade_transaction(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -412,7 +440,7 @@ class DataService:
             'STOCK SPLIT': 'split',
             'TRANSFER': 'transfer'
         }
-        transaction_type = transaction_map.get(action, 'other')
+        transaction_type = transaction_map.get(action, 'adjustment')
         
         # Determine security type
         security_type = 'stock'
@@ -425,13 +453,26 @@ class DataService:
             security_type = 'cash'
         
         # Clean symbol
-        symbol = self.clean_symbol(row['Symbol'], security_type)
+        if security_type != 'fixed_income':
+            symbol = self.clean_symbol(row['Symbol'], security_type)
         
         # Handle fixed income and cash equivalents
         if security_type == 'fixed_income':
             symbol = 'FIXED INCOME'
         elif security_type == 'cash':
             symbol = 'CASH EQUIVALENTS'
+        
+        # Handle transfers
+        if action == 'TRANSFER':
+            security_type = 'cash'
+            symbol = 'CASH EQUIVALENTS'
+            price = 1.0
+            if pd.isna(row.get('Quantity')):
+                quantity = float(str(row.get('Amount', 0)).replace('$', '').replace(',', '')) if pd.notna(row.get('Amount')) else 0.0
+            else:
+                quantity = float(str(row.get('Quantity', 0)).replace(',', ''))
+        else:
+            quantity = float(str(row.get('Quantity', 0)).replace(',', ''))
         
         # Handle adjustments by fetching historical prices
         price = float(str(row.get('Price', 0)).replace('$', '').replace(',', ''))
@@ -441,7 +482,7 @@ class DataService:
                 last_day_prev_month = (date.replace(day=1) - timedelta(days=1))
                 
                 for days_back in range(5):
-                    try_date = last_day_prev_month - timedelta(days=days_back)
+                    try_date = last_day_prev_month - timedelta(days_back)
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
                         ticker = yf.download(symbol, start=try_date, end=try_date + timedelta(days=1), progress=False)
@@ -451,14 +492,18 @@ class DataService:
             except Exception as e:
                 self.logger.error(f"Failed to fetch historical price for {symbol}: {str(e)}")
         
+        # Handle fixed income units conversion (divide by 100 for buy and sold transactions)
+        if security_type == 'fixed_income' and action in ['BOUGHT','SOLD']:
+            quantity /= 100
+        
         return {
             'date': self.standardize_dates(row['Date']),
             'stock': symbol,
             'transaction_type': transaction_type,
-            'units': float(str(row.get('Quantity', 0)).replace(',', '')),
+            'units': quantity,
             'price': price,
             'fee': float(str(row.get('Commission', 0)).replace('$', '').replace(',', '')),
             'option_type': 'call' if 'call' in description else 'put' if 'put' in description else None,
             'security_type': security_type,
             'amount': float(str(row.get('Net Amount', 0)).replace('$', '').replace(',', ''))
-        } 
+        }

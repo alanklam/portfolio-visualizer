@@ -42,19 +42,32 @@ async def upload_file(
         
         # Create transaction records
         for data in transactions_data:
-            transaction = Transaction(
-                user_id=current_user.id,
-                date=data['date'] if isinstance(data['date'], datetime) else datetime.strptime(str(data['date']), '%Y-%m-%d').date(),
-                stock=data['stock'],
-                transaction_type=data['transaction_type'],
-                units=data.get('units'),
-                price=data.get('price'),
-                fee=data.get('fee', 0),
-                option_type=data.get('option_type'),
-                security_type=data.get('security_type', 'stock'),
-                amount=data.get('amount')
-            )
-            db.add(transaction)
+            # Check for existing transaction based on user_id, date, stock, transaction_type, units, and amount
+            existing_transaction = db.query(Transaction).filter(
+                Transaction.user_id == current_user.id,
+                Transaction.date == data['date'],
+                Transaction.stock == data['stock'],
+                Transaction.transaction_type == data['transaction_type'],
+                Transaction.security_type == data['security_type'],
+                Transaction.option_type == data['option_type'],
+                Transaction.amount == data['amount']
+            ).first()
+            
+            # Only add the transaction if it does not already exist
+            if not existing_transaction:
+                transaction = Transaction(
+                    user_id=current_user.id,
+                    date=data['date'] if isinstance(data['date'], datetime) else datetime.strptime(str(data['date']), '%Y-%m-%d').date(),
+                    stock=data['stock'],
+                    transaction_type=data['transaction_type'],
+                    units=data.get('units'),
+                    price=data.get('price'),
+                    fee=data.get('fee', 0),
+                    option_type=data.get('option_type'),
+                    security_type=data.get('security_type', 'stock'),
+                    amount=data.get('amount')
+                )
+                db.add(transaction)
         
         db.commit()
         return {"message": "File processed successfully"}

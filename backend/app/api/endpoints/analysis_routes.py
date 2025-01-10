@@ -138,10 +138,16 @@ async def get_allocation(
         holdings = calculator.calculate_stock_holdings(df)
         
         # Prepare data for pie chart
-        data = {
-            "values": [holding["market_value"] for holding in holdings.values()],
-            "labels": list(holdings.keys())
-        }
+        if holdings:
+            data = {
+                "values": [holding.get("market_value", 0) for holding in holdings.values()],
+                "labels": list(holdings.keys())
+            }
+        else:
+            data = {
+                "values": [],
+                "labels": []
+            }
         
         return ChartData(
             chart_type="pie",
@@ -252,4 +258,49 @@ async def update_settings(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to update settings: {str(e)}"
-        ) 
+        )
+
+@router.get("/annual-returns", response_model=dict)
+async def get_annual_returns(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get annual returns data for the portfolio"""
+    try:
+        transactions = db.query(Transaction).filter(
+            Transaction.user_id == current_user.id
+        ).all()
+        
+        if not transactions:
+            return {
+                "annual_returns": []
+            }
+        
+        # Convert to DataFrame
+        df = pd.DataFrame([{
+            'date': t.date.isoformat() if isinstance(t.date, datetime) else t.date,
+            'transaction_type': t.transaction_type,
+            'stock': t.stock,
+            'units': float(t.units) if t.units else 0.0,
+            'price': float(t.price) if t.price else 0.0,
+            'fee': float(t.fee) if t.fee else 0.0,
+            'amount': t.amount
+        } for t in transactions])
+        
+        # Calculate annual returns
+        df['year'] = pd.to_datetime(df['date']).dt.year
+        annual_returns = df.groupby('year').apply(lambda x: (x['amount'].sum() / x['amount'].count()) if x['amount'].count() > 0 else 0).reset_index(name='return')
+        
+        # Prepare the response
+        annual_returns_list = annual_returns.to_dict(orient='records')
+        
+        return {
+            "annual_returns": annual_returns_list
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in get_annual_returns: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch annual returns data: {str(e)}"
+        )

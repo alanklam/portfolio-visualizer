@@ -13,7 +13,7 @@ import {
 import { PieChart, PerformanceChart, AnnualReturnsChart } from './ChartComponents';
 import { HoldingsTable } from './HoldingsTable';
 import { GainLossAnalysis } from './GainLossAnalysis';
-import { fetchHoldings, fetchGainLoss, fetchAllocation, fetchPerformance } from '../../services/dataService';
+import { fetchHoldings, fetchGainLoss, fetchAllocation, fetchPerformance, fetchAnnualReturns } from '../../services/dataService';
 import { formatCurrency } from '../../utils/formatters';
 import { Link } from 'react-router-dom';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -25,20 +25,34 @@ const Dashboard = () => {
     const [performance, setPerformance] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [annualReturns, setAnnualReturns] = useState(null);
 
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [holdingsData, gainLossData, allocationData, performanceData] = await Promise.all([
+                const [holdingsData, gainLossData, allocationData, performanceData, annualReturnsData] = await Promise.all([
                     fetchHoldings(),
                     fetchGainLoss(),
                     fetchAllocation(),
-                    fetchPerformance()
+                    fetchPerformance(),
+                    fetchAnnualReturns()
                 ]);
                 setHoldings(holdingsData);
                 setGainLoss(gainLossData);
-                setAllocation(allocationData);
+                const parsedAllocationData = JSON.parse(allocationData.data);
+                setAllocation({
+                    chart_type: allocationData.chart_type,
+                    values: parsedAllocationData.values,
+                    labels: parsedAllocationData.labels
+                });
                 setPerformance(performanceData);
+                
+                // Prepare annual returns data for the chart
+                const annualReturns = {
+                    years: annualReturnsData.annual_returns.map(item => item.year),
+                    returns: annualReturnsData.annual_returns.map(item => item.return)
+                };
+                setAnnualReturns(annualReturns);
             } catch (err) {
                 setError(err.message);
             } finally {
@@ -151,17 +165,17 @@ const Dashboard = () => {
                 <Grid item xs={12} md={6}>
                     <Paper sx={{ p: 2 }}>
                         <Typography variant="h6" gutterBottom>
-                            Performance
+                            Annual Returns
                         </Typography>
-                        <PerformanceChart data={performance || {}} />
+                        <AnnualReturnsChart data={annualReturns} />
                     </Paper>
                 </Grid>
                 <Grid item xs={12}>
                     <Paper sx={{ p: 2 }}>
                         <Typography variant="h6" gutterBottom>
-                            Annual Returns
+                            Performance
                         </Typography>
-                        <AnnualReturnsChart data={performance?.annual_returns || {}} />
+                        <PerformanceChart data={performance || {}} />
                     </Paper>
                 </Grid>
             </Grid>
