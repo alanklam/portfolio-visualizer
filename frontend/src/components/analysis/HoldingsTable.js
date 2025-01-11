@@ -24,9 +24,6 @@ export const HoldingsTable = ({ holdings }) => {
                         <TableCell>Type</TableCell>
                         <TableCell align="right">Units</TableCell>
                         <TableCell align="right">Last Price</TableCell>
-                        <TableCell align="right">Market Value</TableCell>
-                        <TableCell align="right">Cost Basis</TableCell>
-                        <TableCell align="right">Unrealized G/L</TableCell>
                         <TableCell align="right">Weight</TableCell>
                     </TableRow>
                 </TableHead>
@@ -37,16 +34,6 @@ export const HoldingsTable = ({ holdings }) => {
                             <TableCell>{holding.security_type}</TableCell>
                             <TableCell align="right">{holding.units.toFixed(2)}</TableCell>
                             <TableCell align="right">{formatCurrency(holding.last_price)}</TableCell>
-                            <TableCell align="right">{formatCurrency(holding.market_value)}</TableCell>
-                            <TableCell align="right">{formatCurrency(holding.cost_basis)}</TableCell>
-                            <TableCell 
-                                align="right"
-                                sx={{ 
-                                    color: holding.unrealized_gain_loss >= 0 ? 'success.main' : 'error.main'
-                                }}
-                            >
-                                {formatCurrency(holding.unrealized_gain_loss)}
-                            </TableCell>
                             <TableCell align="right">{formatPercent(holding.weight)}</TableCell>
                         </TableRow>
                     ))}
@@ -54,4 +41,4 @@ export const HoldingsTable = ({ holdings }) => {
             </Table>
         </TableContainer>
     );
-}; 
+};

@@ -274,6 +274,7 @@ class DataService:
             security_type = 'cash'
             symbol = 'CASH EQUIVALENTS'
             price = 1.0
+            print(row['Quantity'], row['Amount'])
             quantity = float(row.get('Quantity', 0)) if pd.notna(row.get('Quantity')) else float(str(row.get('Amount', 0)).replace('$', '').replace(',', '')) if pd.notna(row.get('Amount')) else 0.0
         else:
             price = float(str(row.get('Price', 0)).replace('$', '').replace(',', '')) if pd.notna(row.get('Price')) else 0.0

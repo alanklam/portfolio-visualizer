@@ -16,16 +16,25 @@ export const GainLossAnalysis = ({ data }) => {
     }
 
     return (
-        <TableContainer component={Paper}>
-            <Table>
+        <TableContainer 
+            component={Paper} 
+            sx={{ 
+                maxWidth: '100%',
+                overflowX: 'auto'  // Enable horizontal scrolling
+            }}
+        >
+            <Table stickyHeader>
                 <TableHead>
                     <TableRow>
                         <TableCell>Symbol</TableCell>
-                        <TableCell align="right">Units</TableCell>
+                        <TableCell align="right">Current Units</TableCell>
                         <TableCell align="right">Market Value</TableCell>
                         <TableCell align="right">Cost Basis</TableCell>
+                        <TableCell align="right">Adjusted Cost</TableCell>
                         <TableCell align="right">Realized G/L</TableCell>
                         <TableCell align="right">Unrealized G/L</TableCell>
+                        <TableCell align="right">Option G/L</TableCell>
+                        <TableCell align="right">Dividend Income</TableCell>
                         <TableCell align="right">Total Return</TableCell>
                         <TableCell align="right">Return %</TableCell>
                     </TableRow>
@@ -37,6 +46,7 @@ export const GainLossAnalysis = ({ data }) => {
                             <TableCell align="right">{details.current_units.toFixed(2)}</TableCell>
                             <TableCell align="right">{formatCurrency(details.market_value)}</TableCell>
                             <TableCell align="right">{formatCurrency(details.total_cost_basis)}</TableCell>
+                            <TableCell align="right">{formatCurrency(details.adjusted_cost_basis)}</TableCell>
                             <TableCell 
                                 align="right"
                                 sx={{ 
@@ -52,6 +62,20 @@ export const GainLossAnalysis = ({ data }) => {
                                 }}
                             >
                                 {formatCurrency(details.unrealized_gain_loss)}
+                            </TableCell>
+                            <TableCell 
+                                align="right"
+                                sx={{ 
+                                    color: details.option_gain_loss >= 0 ? 'success.main' : 'error.main'
+                                }}
+                            >
+                                {formatCurrency(details.option_gain_loss)}
+                            </TableCell>
+                            <TableCell 
+                                align="right"
+                                sx={{ color: 'success.main' }}
+                            >
+                                {formatCurrency(details.dividend_income)}
                             </TableCell>
                             <TableCell 
                                 align="right"
@@ -75,4 +99,4 @@ export const GainLossAnalysis = ({ data }) => {
             </Table>
         </TableContainer>
     );
-}; 
+};
