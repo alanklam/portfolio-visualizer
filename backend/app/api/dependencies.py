@@ -4,7 +4,7 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from ..core.db import get_db
+from ..core.db import SessionLocal
 from ..models.user_model import User
 
 # JWT settings
@@ -25,10 +25,17 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-async def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
-) -> User:
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def get_current_user(
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+) -> Optional[User]:
     """Get current user from JWT token"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -42,8 +49,8 @@ async def get_current_user(
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-        
+    
     user = db.query(User).filter(User.username == username).first()
     if user is None:
         raise credentials_exception
-    return user 
+    return user

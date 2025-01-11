@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from ...core.db import get_db
 from ...models.user_model import User
-from ...models.transaction_model import Transaction, UserSettings
+from ...models.transaction_model import Transaction
 from ...schemas.data_schema import PortfolioHolding, GainLossDetail, ChartData, PerformanceData
 from ...services.analysis_service import FinanceCalculator
 from ..dependencies import get_current_user
@@ -204,62 +204,6 @@ async def get_performance(
             detail=f"Failed to fetch performance data: {str(e)}"
         )
 
-@router.get("/settings")
-async def get_settings(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get user's portfolio target weights"""
-    try:
-        settings = db.query(UserSettings).filter(
-            UserSettings.user_id == current_user.id
-        ).all()
-        
-        return {
-            "target_weights": {
-                s.stock: s.target_weight
-                for s in settings
-            }
-        }
-    except Exception as e:
-        logger.error(f"Error in get_settings: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to fetch settings: {str(e)}"
-        )
-
-@router.post("/settings")
-async def update_settings(
-    weights: Dict[str, float],
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Update user's portfolio target weights"""
-    try:
-        # Delete existing settings
-        db.query(UserSettings).filter(
-            UserSettings.user_id == current_user.id
-        ).delete()
-        
-        # Add new settings
-        for stock, weight in weights.items():
-            setting = UserSettings(
-                user_id=current_user.id,
-                stock=stock,
-                target_weight=weight
-            )
-            db.add(setting)
-            
-        db.commit()
-        return {"message": "Settings updated successfully"}
-    except Exception as e:
-        logger.error(f"Error in update_settings: {str(e)}")
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to update settings: {str(e)}"
-        )
-
 @router.get("/annual-returns", response_model=dict)
 async def get_annual_returns(
     current_user: User = Depends(get_current_user),
@@ -284,18 +228,41 @@ async def get_annual_returns(
             'units': float(t.units) if t.units else 0.0,
             'price': float(t.price) if t.price else 0.0,
             'fee': float(t.fee) if t.fee else 0.0,
+            'security_type': t.security_type,
             'amount': t.amount
         } for t in transactions])
         
-        # Calculate annual returns
-        df['year'] = pd.to_datetime(df['date']).dt.year
-        annual_returns = df.groupby('year').apply(lambda x: (x['amount'].sum() / x['amount'].count()) if x['amount'].count() > 0 else 0).reset_index(name='return')
+        calculator = FinanceCalculator()
         
-        # Prepare the response
-        annual_returns_list = annual_returns.to_dict(orient='records')
+        # Get min and max years from transactions
+        df['year'] = pd.to_datetime(df['date']).dt.year
+        start_year = df['year'].min()
+        end_year = df['year'].max()
+        
+        annual_returns = []
+        
+        for year in range(start_year, end_year + 1):
+            start_date = datetime(year, 1, 1).date()
+            end_date = datetime(year, 12, 31).date()
+            
+            # Calculate holdings at start and end of year
+            start_holdings = calculator.calculate_stock_holdings(df, as_of_date=start_date)
+            end_holdings = calculator.calculate_stock_holdings(df, as_of_date=end_date)
+            
+            # Calculate total portfolio values
+            start_value = sum(holding['market_value'] for holding in start_holdings.values())
+            end_value = sum(holding['market_value'] for holding in end_holdings.values())
+            
+            # Calculate year return in dollar value
+            year_return = end_value - start_value
+            
+            annual_returns.append({
+                'year': year,
+                'return': year_return
+            })
         
         return {
-            "annual_returns": annual_returns_list
+            "annual_returns": annual_returns
         }
     
     except Exception as e:

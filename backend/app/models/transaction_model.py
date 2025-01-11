@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from ..core.db import Base
 
@@ -39,7 +39,11 @@ class UserSettings(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     stock = Column(String, nullable=False)
-    target_weight = Column(Float)
+    target_weight = Column(Float, nullable=False)  # Make sure it's not nullable
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'stock', name='unique_user_stock'),
+    )
     
     # Relationship
-    user = relationship("User", back_populates="settings") 
+    user = relationship("User", back_populates="settings")

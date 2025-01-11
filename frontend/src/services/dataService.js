@@ -41,14 +41,35 @@ export const uploadTransactions = async (files, broker) => {
     return results;
 };
 
-export const fetchSettings = () => {
-    return apiClient.get('/api/portfolio/settings');
-};
-
-export const updateSettings = (weights) => {
-    return apiClient.post('/api/portfolio/settings', weights);
-};
-
 export const fetchAnnualReturns = () => {
     return apiClient.get('/api/portfolio/annual-returns');
-}; 
+};
+
+// Keep these two functions as they're used by HoldingsTable
+export const getSettings = async () => {
+    try {
+        const response = await apiClient.get('/api/portfolio/settings');
+        return response.data;
+    } catch (error) {
+        console.error('Error fetching settings:', error);
+        throw error;
+    }
+};
+
+export const updateSettings = async (weights) => {
+    try {
+        // Convert weights object to expected API format
+        const settingsPayload = {
+            settings: Object.entries(weights).map(([stock, target_weight]) => ({
+                stock,
+                target_weight: parseFloat(target_weight)
+            }))
+        };
+
+        const response = await apiClient.post('/api/portfolio/settings', settingsPayload);
+        return response.data;  // Return the raw response data
+    } catch (error) {
+        console.error('Error updating settings:', error);
+        throw error;
+    }
+};

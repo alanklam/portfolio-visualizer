@@ -8,14 +8,17 @@ import {
     Toolbar,
     Button,
     CircularProgress,
-    Alert
+    Alert,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions
 } from '@mui/material';
 import { PieChart, PerformanceChart, AnnualReturnsChart } from './ChartComponents';
 import { HoldingsTable } from './HoldingsTable';
 import { GainLossAnalysis } from './GainLossAnalysis';
-import { fetchHoldings, fetchGainLoss, fetchAllocation, fetchPerformance, fetchAnnualReturns } from '../../services/dataService';
+import { fetchHoldings, fetchGainLoss, fetchAllocation, fetchPerformance, fetchAnnualReturns, getSettings, updateSettings } from '../../services/dataService';
 import { formatCurrency } from '../../utils/formatters';
-import { Link } from 'react-router-dom';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 
 const Dashboard = () => {
@@ -26,16 +29,31 @@ const Dashboard = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [annualReturns, setAnnualReturns] = useState(null);
+    const [settings, setSettings] = useState(null);
+    const [weightWarning, setWeightWarning] = useState(null);
+    const [weightDialog, setWeightDialog] = useState({
+        open: false,
+        message: '',
+        pendingWeights: null
+    });
 
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [holdingsData, gainLossData, allocationData, performanceData, annualReturnsData] = await Promise.all([
+                const [
+                    holdingsData, 
+                    gainLossData, 
+                    allocationData, 
+                    performanceData, 
+                    annualReturnsData,
+                    settingsData
+                ] = await Promise.all([
                     fetchHoldings(),
                     fetchGainLoss(),
                     fetchAllocation(),
                     fetchPerformance(),
-                    fetchAnnualReturns()
+                    fetchAnnualReturns(),
+                    getSettings()
                 ]);
                 setHoldings(holdingsData);
                 setGainLoss(gainLossData);
@@ -47,12 +65,15 @@ const Dashboard = () => {
                 });
                 setPerformance(performanceData);
                 
-                // Prepare annual returns data for the chart
+                // Update annual returns data format
                 const annualReturns = {
                     years: annualReturnsData.annual_returns.map(item => item.year),
                     returns: annualReturnsData.annual_returns.map(item => item.return)
                 };
                 setAnnualReturns(annualReturns);
+                
+                // Handle settings response - settings data comes as array directly
+                setSettings(settingsData);  // Remove .settings as it's not wrapped
             } catch (err) {
                 setError(err.message);
             } finally {
@@ -61,6 +82,30 @@ const Dashboard = () => {
         };
         loadData();
     }, []);
+
+    const handleWeightUpdate = async (newWeights) => {
+        try {
+            const response = await updateSettings(newWeights);
+            if (response && response.warning) {
+                setWeightDialog({
+                    open: true,
+                    message: `Total weight exceeded 100% (${(response.total_weight * 100).toFixed(1)}%). Would you like to normalize the weights?`,
+                    pendingWeights: response.settings
+                });
+            } else {
+                setSettings(response.settings);
+            }
+        } catch (error) {
+            setError('Failed to update weights');
+        }
+    };
+
+    const handleDialogConfirm = () => {
+        if (weightDialog.pendingWeights) {
+            setSettings(weightDialog.pendingWeights);
+        }
+        setWeightDialog({ open: false, message: '', pendingWeights: null });
+    };
 
     if (loading) {
         return (
@@ -77,6 +122,21 @@ const Dashboard = () => {
             </Alert>
         );
     }
+
+    const renderWeightWarning = () => {
+        if (weightWarning) {
+            return (
+                <Alert 
+                    severity="warning" 
+                    sx={{ mb: 2 }}
+                    onClose={() => setWeightWarning(null)}
+                >
+                    {weightWarning}
+                </Alert>
+            );
+        }
+        return null;
+    };
 
     const totals = Object.values(gainLoss).reduce(
         (acc, curr) => ({
@@ -98,6 +158,9 @@ const Dashboard = () => {
                     </Typography>
                 </Toolbar>
             </AppBar>
+
+            {/* Weight Warning Alert */}
+            {renderWeightWarning()}
 
             {/* Summary Cards */}
             <Grid container spacing={3} sx={{ mb: 4 }}>
@@ -175,7 +238,7 @@ const Dashboard = () => {
                         <Typography variant="h6" gutterBottom>
                             Performance
                         </Typography>
-                        <PerformanceChart data={performance || {}} />
+                        <PerformanceChart data={performance || { dates: [], portfolio_values: [], invested_amounts: [], metrics: {} }} />
                     </Paper>
                 </Grid>
             </Grid>
@@ -185,7 +248,11 @@ const Dashboard = () => {
                 <Typography variant="h6" gutterBottom>
                     Current Holdings
                 </Typography>
-                <HoldingsTable holdings={holdings} />
+                <HoldingsTable 
+                    holdings={holdings} 
+                    settings={settings}  // Pass settings to HoldingsTable
+                    onWeightUpdate={handleWeightUpdate}
+                />
             </Paper>
 
             {/* Gain/Loss Analysis */}
@@ -195,8 +262,27 @@ const Dashboard = () => {
                 </Typography>
                 <GainLossAnalysis data={gainLoss} />
             </Paper>
+
+            {/* Weight Warning Dialog */}
+            <Dialog
+                open={weightDialog.open}
+                onClose={() => setWeightDialog({ open: false, message: '', pendingWeights: null })}
+            >
+                <DialogTitle>Weight Adjustment Required</DialogTitle>
+                <DialogContent>
+                    <Typography>{weightDialog.message}</Typography>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setWeightDialog({ open: false, message: '', pendingWeights: null })}>
+                        Cancel
+                    </Button>
+                    <Button onClick={handleDialogConfirm} autoFocus>
+                        Confirm
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     );
 };
 
-export default Dashboard; 
+export default Dashboard;

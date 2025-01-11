@@ -2,7 +2,7 @@ import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { LoginForm, Dashboard, Settings, FileUpload } from './components/components';
+import { LoginForm, Dashboard, FileUpload } from './components/components';
 import Navigation from './components/Navigation';
 
 const theme = createTheme({
@@ -38,14 +38,6 @@ function App() {
                     }
                 />
                 <Route
-                    path="/settings"
-                    element={
-                        <PrivateRoute>
-                            <Settings />
-                        </PrivateRoute>
-                    }
-                />
-                <Route
                     path="/upload"
                     element={
                         <PrivateRoute>
@@ -58,4 +50,4 @@ function App() {
     );
 }
 
-export default App; 
+export default App;

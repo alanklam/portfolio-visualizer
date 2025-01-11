@@ -27,4 +27,12 @@ def get_db():
     try:
         yield db
     finally:
-        db.close() 
+        # Make sure changes are rolled back on error
+        if db.is_active:
+            db.rollback()
+        db.close()
+
+# Add database migration function
+def migrate_db():
+    """Create or update database tables"""
+    Base.metadata.create_all(bind=engine)
