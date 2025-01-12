@@ -22,7 +22,6 @@ export const HoldingsTable = ({ holdings, settings, onWeightUpdate }) => {
 
     useEffect(() => {
         if (settings) {
-            // Convert settings array to object with stock as key
             const weightMap = settings.reduce((acc, setting) => ({
                 ...acc,
                 [setting.stock]: setting.target_weight
@@ -30,6 +29,15 @@ export const HoldingsTable = ({ holdings, settings, onWeightUpdate }) => {
             setAssignedWeights(weightMap);
         }
     }, [settings]);
+
+    // Calculate total portfolio value
+    const totalPortfolioValue = holdings.reduce((sum, holding) => sum + holding.market_value, 0);
+
+    // Calculate value to change for each holding
+    const calculateValueToChange = (holding, targetWeight) => {
+        const targetValue = totalPortfolioValue * targetWeight;
+        return targetValue - holding.market_value;
+    };
 
     // Modify the click handler to show percentage value
     const handleWeightClick = (symbol, weight) => {
@@ -42,20 +50,28 @@ export const HoldingsTable = ({ holdings, settings, onWeightUpdate }) => {
         setTempWeight(event.target.value);
     };
 
+    // Modify handleWeightSave to refresh weights after save
     const handleWeightSave = async (symbol) => {
-        // Convert percentage input to decimal
         const percentValue = parseFloat(tempWeight);
         if (!isNaN(percentValue) && percentValue >= 0 && percentValue <= 100) {
             try {
                 const decimalWeight = percentValue / 100;
-                // Update local state
                 const newWeights = { ...assignedWeights, [symbol]: decimalWeight };
                 
-                // Save to database
-                await updateSettings(newWeights);
-                setAssignedWeights(newWeights);
+                // Call parent's update function and wait for it to complete
+                await onWeightUpdate(newWeights);
+                
+                // Reset editing state
                 setEditingRow(null);
                 setTempWeight('');
+                
+                // Refresh weights from database
+                const response = await getSettings();
+                const updatedWeights = response.reduce((acc, setting) => ({
+                    ...acc,
+                    [setting.stock]: setting.target_weight
+                }), {});
+                setAssignedWeights(updatedWeights);
             } catch (error) {
                 console.error('Error saving weight:', error);
             }
@@ -77,6 +93,7 @@ export const HoldingsTable = ({ holdings, settings, onWeightUpdate }) => {
                         <TableCell align="right">Last Price</TableCell>
                         <TableCell align="right">Weight</TableCell>
                         <TableCell align="right">Assigned Weight</TableCell>
+                        <TableCell align="right">Value to Change</TableCell>
                     </TableRow>
                 </TableHead>
                 <TableBody>
@@ -115,15 +132,29 @@ export const HoldingsTable = ({ holdings, settings, onWeightUpdate }) => {
                                     <Tooltip title="Click to edit">
                                         <div
                                             onClick={() => handleWeightClick(
-                                                holding.symbol, 
-                                                assignedWeights[holding.symbol] || holding.weight
+                                                holding.symbol,
+                                                assignedWeights[holding.symbol] || 0
                                             )}
                                             style={{ cursor: 'pointer' }}
                                         >
-                                            {formatPercent(assignedWeights[holding.symbol] || holding.weight)}
+                                            {formatPercent(assignedWeights[holding.symbol] || 0)}
                                         </div>
                                     </Tooltip>
                                 )}
+                            </TableCell>
+                            <TableCell 
+                                align="right"
+                                sx={{ 
+                                    color: calculateValueToChange(
+                                        holding, 
+                                        assignedWeights[holding.symbol] || 0
+                                    ) >= 0 ? 'success.main' : 'error.main'
+                                }}
+                            >
+                                {formatCurrency(calculateValueToChange(
+                                    holding,
+                                    assignedWeights[holding.symbol] || 0
+                                ))}
                             </TableCell>
                         </TableRow>
                     ))}

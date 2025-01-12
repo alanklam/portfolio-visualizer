@@ -4,64 +4,60 @@ from typing import List, Dict
 
 def get_user_settings(db: Session, user_id: int) -> List[Dict]:
     # Get current holdings
-    holdings = db.query(Portfolio).filter(Portfolio.user_id == user_id).all()
+    holdings = db.query(Portfolio).filter(
+        Portfolio.user_id == user_id,
+        Portfolio.total_units > 0  # Only get active positions
+    ).all()
     
     # Get existing settings
     settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).all()
     settings_dict = {s.stock: s.target_weight for s in settings}
     
-    # Calculate total portfolio value
-    total_value = sum(h.total_units * h.current_price for h in holdings)
-    
     result = []
     for holding in holdings:
-        current_weight = (holding.total_units * holding.current_price / total_value) if total_value > 0 else 0
         # Initialize target weight if not exists
         if holding.stock not in settings_dict:
             new_setting = UserSettings(
                 user_id=user_id,
                 stock=holding.stock,
-                target_weight=current_weight 
+                target_weight=0.0  # Initialize with 0 instead of current weight
             )
             db.add(new_setting)
-            settings_dict[holding.stock] = current_weight
-    
+            settings_dict[holding.stock] = 0.0
+
     # Commit new settings if any were added
     if len(settings_dict) > len(settings):
         try:
             db.commit()
-        except:
+        except Exception as e:
+            print(f"Error committing settings: {e}")
             db.rollback()
             raise
     
-    # Build result including any newly initialized settings
+    # Build result with just stock and target weight
     for holding in holdings:
-        current_weight = (holding.total_units * holding.current_price / total_value) if total_value > 0 else 0
         result.append({
             "stock": holding.stock,
-            "current_weight": current_weight,
-            "target_weight": settings_dict.get(holding.stock, current_weight) 
+            "target_weight": settings_dict.get(holding.stock, 0.0)
         })
     
     return result
 
 def update_user_settings(db: Session, user_id: int, settings: List[Dict]) -> List[Dict]:
-    # Delete existing settings
-    db.execute(
-        UserSettings.__table__.delete().where(UserSettings.user_id == user_id)
-    )
-    
-    # Insert new settings
-    new_settings = [
-        UserSettings(
-            user_id=user_id,
-            stock=item["stock"],
-            target_weight=item["target_weight"]
-        )
-        for item in settings
-    ]
-    
-    db.add_all(new_settings)
+    # Remove the delete statement; instead update or create each setting for one stock
+    for item in settings:
+        existing = db.query(UserSettings).filter(
+            UserSettings.user_id == user_id,
+            UserSettings.stock == item["stock"]
+        ).first()
+        if existing:
+            existing.target_weight = item["target_weight"]
+        else:
+            new_setting = UserSettings(
+                user_id=user_id,
+                stock=item["stock"],
+                target_weight=item["target_weight"]
+            )
+            db.add(new_setting)
     db.commit()
-    
     return get_user_settings(db, user_id)

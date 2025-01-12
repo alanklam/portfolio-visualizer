@@ -58,16 +58,24 @@ export const getSettings = async () => {
 
 export const updateSettings = async (weights) => {
     try {
-        // Convert weights object to expected API format
-        const settingsPayload = {
+        // Add logging to debug the payload
+        console.log('Sending weights payload:', {
             settings: Object.entries(weights).map(([stock, target_weight]) => ({
                 stock,
                 target_weight: parseFloat(target_weight)
             }))
-        };
+        });
 
-        const response = await apiClient.post('/api/portfolio/settings', settingsPayload);
-        return response.data;  // Return the raw response data
+        const response = await apiClient.post('/api/portfolio/settings', {
+            settings: Object.entries(weights).map(([stock, target_weight]) => ({
+                stock,
+                target_weight: parseFloat(target_weight)
+            }))
+        });
+        
+        // Add logging to debug the response
+        console.log('Received response:', response);
+        return response;
     } catch (error) {
         console.error('Error updating settings:', error);
         throw error;

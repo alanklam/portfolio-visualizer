@@ -2,11 +2,11 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from ...core.db import get_db
 from ...models.user_model import User
-from ...models.transaction_model import Transaction
+from ...models.transaction_model import Transaction, Portfolio
 from ...schemas.data_schema import PortfolioHolding, GainLossDetail, ChartData, PerformanceData
 from ...services.analysis_service import FinanceCalculator
 from ..dependencies import get_current_user
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import json
 import logging
@@ -20,7 +20,7 @@ async def get_holdings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get current portfolio holdings"""
+    """Get current portfolio holdings, todo: cache for 1 minute"""
     try:
         transactions = db.query(Transaction).filter(
             Transaction.user_id == current_user.id
@@ -45,6 +45,38 @@ async def get_holdings(
         calculator = FinanceCalculator()
         holdings = calculator.calculate_stock_holdings(df)
         
+        # Update portfolio table
+        existing_portfolios = {
+            p.stock: p for p in db.query(Portfolio).filter(
+                Portfolio.user_id == current_user.id
+            ).all()
+        }
+        
+        # Update or create portfolio entries
+        for symbol, data in holdings.items():
+            if symbol in existing_portfolios:
+                portfolio = existing_portfolios[symbol]
+                portfolio.total_units = data['units']
+                portfolio.average_cost = data['cost_basis'] / data['units'] if data['units'] > 0 else 0
+                portfolio.current_price = data['last_price']
+                portfolio.last_updated = datetime.now().date()
+            else:
+                portfolio = Portfolio(
+                    user_id=current_user.id,
+                    stock=symbol,
+                    total_units=data['units'],
+                    average_cost=data['cost_basis'] / data['units'] if data['units'] > 0 else 0,
+                    current_price=data['last_price'],
+                    last_updated=datetime.now().date()
+                )
+                db.add(portfolio)
+        
+        try:
+            db.commit()
+        except Exception as e:
+            logger.error(f"Error updating portfolio: {str(e)}")
+            db.rollback()
+            
         return [
             PortfolioHolding(
                 symbol=str(symbol),
@@ -236,19 +268,26 @@ async def get_annual_returns(
         
         # Get min and max years from transactions
         df['year'] = pd.to_datetime(df['date']).dt.year
+        min_date = df['date'].min()
         start_year = df['year'].min()
         end_year = df['year'].max()
         
         annual_returns = []
         
         for year in range(start_year, end_year + 1):
-            start_date = datetime(year, 1, 1).date()
+            start_date = max(datetime(year, 1, 1).date(), min_date)
             end_date = datetime(year, 12, 31).date()
             
             # Calculate holdings at start and end of year
-            start_holdings = calculator.calculate_stock_holdings(df, as_of_date=start_date)
-            end_holdings = calculator.calculate_stock_holdings(df, as_of_date=end_date)
-            
+            price_data1 = calculator.calculate_stock_holdings_batch(df, start_date=start_date - timedelta(days=5), end_date=start_date)
+            last_date = sorted(price_data1.keys())[-1]
+            start_holdings = price_data1[last_date]
+            price_data2 = calculator.calculate_stock_holdings_batch(df, start_date=end_date - timedelta(days=5), end_date=end_date)
+            last_date = sorted(price_data2.keys())[-1]
+            end_holdings = price_data2[last_date]
+
+            print("start:", start_holdings)
+            print("end:", end_holdings)
             # Calculate total portfolio values
             start_value = sum(holding['market_value'] for holding in start_holdings.values())
             end_value = sum(holding['market_value'] for holding in end_holdings.values())

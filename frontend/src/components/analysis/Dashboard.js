@@ -85,18 +85,25 @@ const Dashboard = () => {
 
     const handleWeightUpdate = async (newWeights) => {
         try {
+            console.log('Sending weights to update:', newWeights);
             const response = await updateSettings(newWeights);
-            if (response && response.warning) {
+            console.log('Received settings response:', response);
+            
+            if (response.warning) {
                 setWeightDialog({
                     open: true,
                     message: `Total weight exceeded 100% (${(response.total_weight * 100).toFixed(1)}%). Would you like to normalize the weights?`,
                     pendingWeights: response.settings
                 });
-            } else {
+            } else if (response.settings) {
+                // Make sure we're setting the correct format
                 setSettings(response.settings);
+            } else {
+                throw new Error('Invalid response format');
             }
         } catch (error) {
-            setError('Failed to update weights');
+            console.error('Weight update error:', error);
+            setError('Failed to update weights: ' + error.message);
         }
     };
 
