@@ -268,7 +268,8 @@ async def get_annual_returns(
         
         # Get min and max years from transactions
         df['year'] = pd.to_datetime(df['date']).dt.year
-        min_date = df['date'].min()
+        min_date = df['date'].min() + timedelta(days=7) #add 7 days to avoid empty account
+        max_date = df['date'].max()
         start_year = df['year'].min()
         end_year = df['year'].max()
         
@@ -276,7 +277,7 @@ async def get_annual_returns(
         
         for year in range(start_year, end_year + 1):
             start_date = max(datetime(year, 1, 1).date(), min_date)
-            end_date = datetime(year, 12, 31).date()
+            end_date = min(datetime(year, 12, 31).date(), max_date)
             
             # Calculate holdings at start and end of year
             price_data1 = calculator.calculate_stock_holdings_batch(df, start_date=start_date - timedelta(days=5), end_date=start_date)
@@ -286,8 +287,8 @@ async def get_annual_returns(
             last_date = sorted(price_data2.keys())[-1]
             end_holdings = price_data2[last_date]
 
-            print("start:", start_holdings)
-            print("end:", end_holdings)
+            # print("start:", start_holdings)
+            # print("end:", end_holdings)
             # Calculate total portfolio values
             start_value = sum(holding['market_value'] for holding in start_holdings.values())
             end_value = sum(holding['market_value'] for holding in end_holdings.values())

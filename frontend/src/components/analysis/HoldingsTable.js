@@ -16,20 +16,24 @@ import { formatCurrency, formatPercent } from '../../utils/formatters';
 import { getSettings, updateSettings } from '../../services/dataService';
 
 export const HoldingsTable = ({ holdings, settings, onWeightUpdate }) => {
+    // Changed this line to avoid initializing from settings here:
     const [assignedWeights, setAssignedWeights] = useState({});
+    
     const [editingRow, setEditingRow] = useState(null);
     const [tempWeight, setTempWeight] = useState('');
 
+    // Update when settings change
     useEffect(() => {
         if (settings) {
             const weightMap = settings.reduce((acc, setting) => ({
                 ...acc,
                 [setting.stock]: setting.target_weight
             }), {});
+            console.log('Settings updated:', weightMap);
             setAssignedWeights(weightMap);
         }
     }, [settings]);
-
+    
     // Calculate total portfolio value
     const totalPortfolioValue = holdings.reduce((sum, holding) => sum + holding.market_value, 0);
 

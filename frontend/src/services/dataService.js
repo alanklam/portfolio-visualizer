@@ -49,10 +49,18 @@ export const fetchAnnualReturns = () => {
 export const getSettings = async () => {
     try {
         const response = await apiClient.get('/api/portfolio/settings');
-        return response.data;
+
+        // response.data is already the array we want
+        if (response && Array.isArray(response)) {
+            // console.log('Valid settings array:', response);
+            return response;
+        }
+        
+        console.warn('Unexpected settings format, returning empty array');
+        return [];
     } catch (error) {
         console.error('Error fetching settings:', error);
-        throw error;
+        return [];
     }
 };
 

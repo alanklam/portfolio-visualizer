@@ -55,6 +55,14 @@ const Dashboard = () => {
                     fetchAnnualReturns(),
                     getSettings()
                 ]);
+
+                if (Array.isArray(settingsData)) {
+                    setSettings(settingsData);
+                } else {
+                    console.warn('Invalid settings data format:', settingsData);
+                    setSettings([]); // Set empty array as fallback
+                }
+                
                 setHoldings(holdingsData);
                 setGainLoss(gainLossData);
                 const parsedAllocationData = JSON.parse(allocationData.data);
@@ -71,10 +79,11 @@ const Dashboard = () => {
                     returns: annualReturnsData.annual_returns.map(item => item.return)
                 };
                 setAnnualReturns(annualReturns);
+                console.log('Annual Returns Data:', annualReturns);
                 
-                // Handle settings response - settings data comes as array directly
-                setSettings(settingsData);  // Remove .settings as it's not wrapped
+                setSettings(settingsData);
             } catch (err) {
+                console.error('Dashboard data loading error:', err);
                 setError(err.message);
             } finally {
                 setLoading(false);
