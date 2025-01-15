@@ -41,8 +41,15 @@ export const uploadTransactions = async (files, broker) => {
     return results;
 };
 
-export const fetchAnnualReturns = () => {
-    return apiClient.get('/api/portfolio/annual-returns');
+export const fetchAnnualReturns = async () => {
+    try {
+        const response = await apiClient.get('/api/portfolio/annual-returns');
+        console.log('Annual returns API response:', response);
+        return response;
+    } catch (error) {
+        console.error('Error fetching annual returns:', error);
+        throw error;
+    }
 };
 
 // Keep these two functions as they're used by HoldingsTable

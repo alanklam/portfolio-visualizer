@@ -35,7 +35,12 @@ async def upload_file(
     try:
         # Read file contents
         contents = await file.read()
-        df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
+        
+        # For E*TRADE, skip the first row as it contains account info
+        if broker.lower() == 'etrade':
+            df = pd.read_csv(io.StringIO(contents.decode('utf-8')), skiprows=1)
+        else:
+            df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
         
         # Process the CSV file
         transactions_data = process_csv_file(df, broker=broker.lower())
@@ -75,4 +80,4 @@ async def upload_file(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred while processing the file: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"An error occurred while processing the file: {str(e)}")

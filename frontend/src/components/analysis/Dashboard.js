@@ -73,18 +73,25 @@ const Dashboard = () => {
                 });
                 setPerformance(performanceData);
                 
-                // Update annual returns data format
-                const annualReturns = {
-                    years: annualReturnsData.annual_returns.map(item => item.year),
-                    returns: annualReturnsData.annual_returns.map(item => item.return)
-                };
-                setAnnualReturns(annualReturns);
-                console.log('Annual Returns Data:', annualReturns);
+                // Add defensive check for annual returns data
+                console.log('Raw annual returns data:', annualReturnsData);
+                
+                if (annualReturnsData && annualReturnsData.annual_returns && Array.isArray(annualReturnsData.annual_returns)) {
+                    const annualReturns = {
+                        years: annualReturnsData.annual_returns.map(item => item.year),
+                        returns: annualReturnsData.annual_returns.map(item => item.return)
+                    };
+                    console.log('Processed annual returns:', annualReturns);
+                    setAnnualReturns(annualReturns);
+                } else {
+                    console.error('Invalid annual returns data structure:', annualReturnsData);
+                    setError('Failed to load annual returns data: Invalid data format');
+                }
                 
                 setSettings(settingsData);
             } catch (err) {
                 console.error('Dashboard data loading error:', err);
-                setError(err.message);
+                setError(err.message || 'Failed to load dashboard data');
             } finally {
                 setLoading(false);
             }

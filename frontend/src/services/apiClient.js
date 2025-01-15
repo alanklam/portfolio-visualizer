@@ -25,17 +25,13 @@ export const getHeaders = (isFormData = false) => {
 
 export const handleApiError = async (response) => {
     if (!response.ok) {
-        if (response.status === 401) {
-            // Unauthorized, clear token and redirect to login
-            localStorage.removeItem('token');
-            localStorage.removeItem('username');
-            window.location.href = '/';
-        }
-        
-        const errorData = await response.json().catch(() => ({ detail: 'API request failed' }));
-        const errorMessage = errorData.detail || 
-            (typeof errorData === 'object' ? JSON.stringify(errorData) : 'API request failed');
-        throw new Error(errorMessage);
+        const errorData = await response.json().catch(() => ({}));
+        console.error('API Error Response:', {
+            status: response.status,
+            statusText: response.statusText,
+            errorData
+        });
+        throw new Error(errorData.detail || `Failed to fetch data: ${response.statusText}`);
     }
     return response.json();
 };

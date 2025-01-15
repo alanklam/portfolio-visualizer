@@ -291,11 +291,11 @@ class FinanceCalculator:
                 'adjusted_cost_basis': adjusted_cost_basis,
                 'realized_gain_loss': realized_gain_loss,
                 'unrealized_gain_loss': unrealized_gain_loss,
-                'unrealized_gain_loss_pct': (unrealized_gain_loss / total_cost_basis * 100) if total_cost_basis > 0 else 0,
+                'unrealized_gain_loss_pct': (unrealized_gain_loss / total_cost_basis) if total_cost_basis > 0 else 0,
                 'dividend_income': dividend_income,
                 'option_gain_loss': option_gain_loss,
                 'total_return': total_return,
-                'total_return_pct': (total_return / total_cost_basis * 100) if total_cost_basis > 0 else 0,
+                'total_return_pct': (total_return / total_cost_basis) if total_cost_basis > 0 else 0,
                 'last_price': current_holding['last_price'],
                 'last_update': current_holding['last_update']
             }
@@ -316,12 +316,13 @@ class FinanceCalculator:
         """
         if df.empty:
             return {}
-            
+
         # Generate dates at specified frequency
         date_range = pd.date_range(start=start_date, end=end_date, freq=freq)
+
         if date_range.empty:
             return {}
-            
+        
         # Get unique symbols from transactions, keeping FIXED INCOME but excluding CASH
         symbols = set(df['stock'].unique()) - {'CASH EQUIVALENTS'}
         if not symbols:  # If no symbols to price
@@ -331,7 +332,7 @@ class FinanceCalculator:
         # Convert symbols to list and sort for consistency
         # Filter out FIXED INCOME from symbols requiring price download
         price_symbols = sorted(list(symbols - {'FIXED INCOME'}))
-        
+
         # Batch download prices only for non-fixed income securities
         prices_df = pd.DataFrame()
         if price_symbols:
@@ -359,7 +360,7 @@ class FinanceCalculator:
             except Exception as e:
                 self.logger.error(f"Error in batch price download: {str(e)}")
                 return {}
-            
+      
         self.logger.debug(f"Successfully downloaded prices for {len(price_symbols)} symbols")
         
         holdings_by_date = {}
@@ -367,7 +368,7 @@ class FinanceCalculator:
         # Calculate holdings for each date
         for calc_date in date_range:
             calc_date = calc_date.date()
-            
+ 
             # Filter transactions up to this date
             transactions_to_date = df[pd.to_datetime(df['date']).dt.date <= calc_date].copy()
             
@@ -439,7 +440,7 @@ class FinanceCalculator:
             holdings = self._calculate_portfolio_values(holdings, prices_df, calc_date)
             
             holdings_by_date[calc_date] = holdings
-        
+
         return holdings_by_date
         
     def _calculate_holdings_without_prices(self, df: pd.DataFrame, date_range: pd.DatetimeIndex) -> dict:

@@ -17,26 +17,52 @@ def process_csv_file(df: pd.DataFrame, broker: str = 'schwab') -> List[Dict[str,
     
     # Convert DataFrame to list of dictionaries
     transactions = []
+    skipped_rows = 0
     
-    if broker.lower() == 'schwab':
-        for _, row in df.iterrows():
-            transaction = data_service._process_schwab_transaction(row)
+    for idx, row in df.iterrows():
+
+        try:
+            # First check if the raw line is valid before processing
+            raw_line = ','.join(str(v) for v in row.values)
+
+            if not data_service.is_valid_line(raw_line, broker):
+                skipped_rows += 1
+                logger.debug(f"Skipping invalid line {idx}: {raw_line[:100]}...")  # Log first 100 chars
+                continue
+            
+            # Skip invalid rows
+            if not data_service.is_valid_row(row.to_dict(), broker):
+                skipped_rows += 1
+                continue
+            
+            # Process row based on broker type
+            if broker.lower() == 'schwab':
+                transaction = data_service._process_schwab_transaction(row)
+            elif broker.lower() == 'fidelity':
+                transaction = data_service._process_fidelity_transaction(row)
+            elif broker.lower() == 'etrade':
+                print(row)
+                transaction = data_service._process_etrade_transaction(row)
+            else:
+                raise ValueError(f"Unsupported broker: {broker}")
+
             if transaction:
                 transactions.append(transaction)
-    elif broker.lower() == 'fidelity':
-        for _, row in df.iterrows():
-            transaction = data_service._process_fidelity_transaction(row)
-            if transaction:
-                transactions.append(transaction)
-    elif broker.lower() == 'etrade':
-        for _, row in df.iterrows():
-            transaction = data_service._process_etrade_transaction(row)
-            if transaction:
-                transactions.append(transaction)
-    else:
-        raise ValueError(f"Unsupported broker: {broker}")
-    
+            else:
+                skipped_rows += 1
+
+        except Exception as e:
+            logger.warning(f"Error processing row {idx}: {str(e)}")
+            skipped_rows += 1
+            continue
+
+    if skipped_rows > 0:
+        logger.info(f"Skipped {skipped_rows} invalid rows while processing {broker} CSV")
+
     # Convert to DataFrame for validation and standardization
+    if not transactions:
+        raise ValueError("No valid transactions found in CSV file")
+
     df_processed = pd.DataFrame(transactions)
     df_processed['broker'] = broker.lower()
     
@@ -76,6 +102,22 @@ class DataService:
         r'GOVT\s+SECURITY', r'INT', r'INTEREST'
     ]
 
+    # Add new constant for Fidelity column mapping
+    FIDELITY_COLUMN_MAP = {
+        'Run Date': 'Date',
+        'Action': 'Action',
+        'Symbol': 'Symbol',
+        'Description': 'Description',
+        'Type': 'Type',
+        'Quantity': 'Quantity',
+        'Price ($)': 'Price',
+        'Commission ($)': 'Commission',
+        'Fees ($)': 'Fees',
+        'Accrued Interest ($)': 'Accrued Interest',
+        'Amount ($)': 'Amount',
+        'Settlement Date': 'Settlement Date'
+    }
+
     def __init__(self):
         self.logger = logging.getLogger(__name__)
 
@@ -105,6 +147,11 @@ class DataService:
         if security_type == 'option':
             # Remove leading dash if present
             symbol = symbol.lstrip('-')
+            
+            # Handle compact option format like BAC220204P45
+            match = re.match(r'^([A-Z]+)\d{6}[CP]\d+', symbol)
+            if match:
+                return match.group(1)
             
             # Remove date patterns
             symbol = re.sub(r'[\s_]\d{2}/?[0-1]\d/?2?\d', '', symbol)
@@ -217,8 +264,8 @@ class DataService:
             # Validate numeric values for trade transactions
             trade_mask = ~df['transaction_type'].isin(self.NON_TRADE_TYPES + ['split'])
             
-            if (df.loc[trade_mask, 'units'] == 0).any():
-                raise ValueError("Found trade transactions with zero units")
+            # if (df.loc[trade_mask, 'units'] == 0).any():
+            #     raise ValueError("Found trade transactions with zero units")
             
             if (df.loc[trade_mask, 'price'] < 0).any():
                 raise ValueError("Found negative prices")
@@ -274,7 +321,6 @@ class DataService:
             security_type = 'cash'
             symbol = 'CASH EQUIVALENTS'
             price = 1.0
-            print(row['Quantity'], row['Amount'])
             quantity = float(row.get('Quantity', 0)) if pd.notna(row.get('Quantity')) else float(str(row.get('Amount', 0)).replace('$', '').replace(',', '')) if pd.notna(row.get('Amount')) else 0.0
         else:
             price = float(str(row.get('Price', 0)).replace('$', '').replace(',', '')) if pd.notna(row.get('Price')) else 0.0
@@ -344,60 +390,77 @@ class DataService:
 
     def _process_fidelity_transaction(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """Process Fidelity transaction format"""
-        action = str(row['Action']).upper()
+        # Standardize column names
+        std_row = {}
+        for orig_key, value in row.items():
+            clean_key = orig_key.strip().replace(' ($)', '')
+            std_key = self.FIDELITY_COLUMN_MAP.get(clean_key, clean_key)
+            std_row[std_key] = value
+
+        action = str(std_row.get('Action', '')).upper()
+        description = str(std_row.get('Description', '')).upper()
         
-        # Extract transaction type
-        transaction_map = {
-            'YOU BOUGHT': {
-                'OPENING TRANSACTION': 'buy_to_open',
-                'CLOSING TRANSACTION': 'buy_to_close',
-                None: 'buy'
-            },
-            'YOU SOLD': {
-                'OPENING TRANSACTION': 'sell_to_open',
-                'CLOSING TRANSACTION': 'sell_to_close',
-                None: 'sell'
-            },
-            'REINVESTMENT': 'reinvest',
-            'DIVIDEND': 'dividend',
-            'ASSIGNED': 'assigned',
-            'EXPIRED': 'expired',
-            'STOCK SPLIT': 'split',
-            'TRANSFER': 'transfer'
-        }
-        
-        transaction_type = 'other'
-        for key, value in transaction_map.items():
-            if key in action:
-                if isinstance(value, dict):
-                    for sub_key, sub_value in value.items():
-                        if sub_key and sub_key in action:
-                            transaction_type = sub_value
-                            break
-                    if transaction_type == 'other':
-                        transaction_type = value[None]
-                else:
-                    transaction_type = value
+        # Check for cash transfer condition first
+        if 'PURCHASE INTO CORE' in action and 'MORNING TRADE' not in action:
+            transaction_type = 'transfer'
+            security_type = 'cash'
+            symbol = 'CASH EQUIVALENTS'
+        else:
+            # Rest of the existing transaction type mapping
+            transaction_map = {
+                'YOU BOUGHT': {
+                    'OPENING TRANSACTION': 'buy_to_open',
+                    'CLOSING TRANSACTION': 'buy_to_close',
+                    None: 'buy'
+                },
+                'YOU SOLD': {
+                    'OPENING TRANSACTION': 'sell_to_open',
+                    'CLOSING TRANSACTION': 'sell_to_close',
+                    None: 'sell'
+                },
+                'REDEMPTION PAYOUT': 'sell',
+                'ASSIGNED': 'assigned',
+                'REINVESTMENT': 'reinvest',
+                'DIVIDEND': 'dividend',
+                'EXPIRED': 'expired',
+                'STOCK SPLIT': 'split',
+                'TRANSFER': 'transfer'
+            }
+            
+            transaction_type = 'other'
+            for key, value in transaction_map.items():
+                if key in action:
+                    if isinstance(value, dict):
+                        for sub_key, sub_value in value.items():
+                            if sub_key and sub_key in action:
+                                transaction_type = sub_value
+                                break
+                        if transaction_type == 'other':
+                            transaction_type = value[None]
+                        break
+                    else:
+                        transaction_type = value
+                        break
         
         # Determine security type
         security_type = 'stock'
-        description = str(row.get('Description', '')).lower()
-        if 'option' in description:
+        description = str(std_row.get('Description', '')).lower()
+        if 'option' in description or 'call' in description or 'put' in description:
             security_type = 'option'
-        elif self.is_fixed_income_symbol(row['Symbol']):
+        elif self.is_fixed_income_symbol(std_row['Symbol']):
             security_type = 'fixed_income'
-        elif row['Symbol'] in self.CASH_EQUIVALENTS:
+        elif std_row['Symbol'] in self.CASH_EQUIVALENTS:
             security_type = 'cash'
         
         # Clean symbol
-        symbol = self.clean_symbol(row['Symbol'], security_type)
-        
+        symbol = self.clean_symbol(std_row['Symbol'], security_type)
+
         # Handle fixed income and cash equivalents
         if security_type == 'fixed_income':
             symbol = 'FIXED INCOME'
         elif security_type == 'cash':
             symbol = 'CASH EQUIVALENTS'
-            
+
         # Extract option type
         option_type = None
         if 'call' in description:
@@ -406,13 +469,22 @@ class DataService:
             option_type = 'put'
         
         # Extract units, price, fee, and amount
-        units = abs(float(str(row.get('Quantity', 0)).replace(',', '')))
-        price = float(str(row.get('Price', 0)).replace('$', '').replace(',', ''))
-        fee = float(str(row.get('Commission', 0)).replace('$', '').replace(',', ''))
-        amount = float(str(row.get('Amount', 0)).replace('$', '').replace(',', ''))
-        
+        units = abs(float(str(std_row.get('Quantity', 0)).replace(',', ''))) if pd.notna(std_row.get('Quantity')) else 0.0
+        price = float(str(std_row.get('Price', 0)).replace('$', '').replace(',', '')) if pd.notna(std_row.get('Price')) else 0.0
+        fee = float(str(std_row.get('Commission', 0)).replace('$', '').replace(',', ''))
+        amount = float(str(std_row.get('Amount', 0)).replace('$', '').replace(',', '')) if pd.notna(std_row.get('Amount')) else 0.0
+        if transaction_type=='transfer':
+            amount = abs(amount) # Transfer amount should be positive
+
+        # Handle fixed income units conversion (divide by 100 for buy transactions in Fidelity)
+        if security_type == 'fixed_income' and transaction_type == 'buy':
+            units /= 100
+        elif security_type == 'fixed_income' and transaction_type == 'sell':
+            units /= 100
+            price = 100.0
+
         return {
-            'date': self.standardize_dates(row['Date']),
+            'date': self.standardize_dates(std_row['Date']),
             'stock': symbol,
             'transaction_type': transaction_type,
             'units': units,
@@ -425,7 +497,7 @@ class DataService:
 
     def _process_etrade_transaction(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """Process E*TRADE transaction format"""
-        action = str(row.get('Transaction Type', '')).upper()
+        action = str(row.get('TransactionType', '')).upper()
         
         # Map transaction types
         transaction_map = {
@@ -441,28 +513,28 @@ class DataService:
             'STOCK SPLIT': 'split',
             'TRANSFER': 'transfer'
         }
-        transaction_type = transaction_map.get(action, 'adjustment')
+        transaction_type = transaction_map.get(action, 'other')
         
         # Determine security type
         security_type = 'stock'
         description = str(row.get('Description', '')).lower()
-        if 'option' in description:
+        if 'option' in description or 'call' in description or 'put' in description:
             security_type = 'option'
         elif self.is_fixed_income_symbol(row['Symbol']):
             security_type = 'fixed_income'
         elif row['Symbol'] in self.CASH_EQUIVALENTS:
             security_type = 'cash'
-        
-        # Clean symbol
-        if security_type != 'fixed_income':
-            symbol = self.clean_symbol(row['Symbol'], security_type)
-        
+                
         # Handle fixed income and cash equivalents
         if security_type == 'fixed_income':
             symbol = 'FIXED INCOME'
         elif security_type == 'cash':
             symbol = 'CASH EQUIVALENTS'
         
+        # Clean symbol
+        if security_type != 'fixed_income':
+            symbol = self.clean_symbol(row['Symbol'], security_type)
+
         # Handle transfers
         if action == 'TRANSFER':
             security_type = 'cash'
@@ -479,7 +551,7 @@ class DataService:
         price = float(str(row.get('Price', 0)).replace('$', '').replace(',', ''))
         if transaction_type == 'adjustment' and price == 0:
             try:
-                date = pd.to_datetime(row['Date'])
+                date = pd.to_datetime(row['TransactionDate'])
                 last_day_prev_month = (date.replace(day=1) - timedelta(days=1))
                 
                 for days_back in range(5):
@@ -498,7 +570,7 @@ class DataService:
             quantity /= 100
         
         return {
-            'date': self.standardize_dates(row['Date']),
+            'date': self.standardize_dates(row['TransactionDate']),
             'stock': symbol,
             'transaction_type': transaction_type,
             'units': quantity,
@@ -506,5 +578,76 @@ class DataService:
             'fee': float(str(row.get('Commission', 0)).replace('$', '').replace(',', '')),
             'option_type': 'call' if 'call' in description else 'put' if 'put' in description else None,
             'security_type': security_type,
-            'amount': float(str(row.get('Net Amount', 0)).replace('$', '').replace(',', ''))
+            'amount': float(str(row.get('Amount', 0)).replace('$', '').replace(',', ''))
         }
+
+    def is_valid_line(self, line: str, broker: str) -> bool:
+        """Check if a line from CSV contains valid data."""
+        # Skip empty lines
+        if not line or line.isspace():
+            return False
+
+        # Skip disclaimer and footer lines
+        if any(pattern in line.lower() for pattern in [
+            'provided to you solely for your use',
+            'is not intended to provide advice',
+            'information known to fidelity',
+            'not intended for tax reporting',
+            'brokerage products',
+            'for more information',
+            'the data and information',
+            'brokerage services are provided by fidelity brokerage',
+            'fidelity investment companies and members',
+            'fidelity insurance agency',
+            'date downloaded',
+            'for account',
+            'processed as of'
+        ]):
+            return False
+
+        # Broker-specific validation
+        if broker.lower() == 'schwab':
+            # Skip lines without proper date format
+            if not re.search(r'\d{2}/\d{2}/\d{4}', line):
+                return False
+            # Skip lines that are just separators or headers
+            if line.count(',') < 3:
+                return False
+
+        elif broker.lower() == 'fidelity':
+            # Skip lines without proper date format or account info
+            if not (re.search(r'\d{2}/\d{2}/\d{4}', line) and 'Individual' in line):
+                return False
+
+        elif broker.lower() == 'etrade':
+            # Skip lines without proper date and transaction info
+            if not (re.search(r'\d{2}/\d{2}/\d{2}', line) and ',' in line):
+                return False
+
+        return True
+
+    def is_valid_row(self, row: Dict[str, Any], broker: str) -> bool:
+        """Validate a parsed row based on broker-specific rules."""
+        try:
+            if broker.lower() == 'schwab':
+                # Must have date and either action or amount
+                return (row.get('Date') and 
+                       (row.get('Action') or 
+                        (row.get('Amount') and row['Amount'].strip() not in ['', '$0.00'])))
+
+            elif broker.lower() == 'fidelity':
+                # Must have run date and either action or amount
+                return (row.get('Run Date') and 
+                       (row.get('Action') or 
+                        (row.get('Amount ($)') and row['Amount ($)'].strip() not in ['', '0.00'])))
+
+            elif broker.lower() == 'etrade':
+                # Must have transaction date and either type or amount
+                return (row.get('TransactionDate') and 
+                       (row.get('TransactionType') or 
+                        (row.get('Amount') and str(row['Amount']).strip() not in ['', '0'])))
+
+            return False
+        except Exception as e:
+            self.logger.warning(f"Row validation error: {e}")
+            return False
