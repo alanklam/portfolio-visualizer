@@ -23,7 +23,8 @@ async def get_holdings(
     """Get current portfolio holdings, todo: cache for 1 minute"""
     try:
         transactions = db.query(Transaction).filter(
-            Transaction.user_id == current_user.id
+            Transaction.user_id == current_user.id,
+            Transaction.transaction_type != 'other'  # Add this filter
         ).all()
         
         if not transactions:
@@ -105,7 +106,8 @@ async def get_gain_loss(
     """Get portfolio gain/loss analysis"""
     try:
         transactions = db.query(Transaction).filter(
-            Transaction.user_id == current_user.id
+            Transaction.user_id == current_user.id,
+            Transaction.transaction_type != 'other'  # Add this filter
         ).all()
         
         if not transactions:
@@ -142,7 +144,8 @@ async def get_allocation(
     """Get portfolio allocation chart data"""
     try:
         transactions = db.query(Transaction).filter(
-            Transaction.user_id == current_user.id
+            Transaction.user_id == current_user.id,
+            Transaction.transaction_type != 'other'  # Add this filter
         ).all()
         
         if not transactions:
@@ -202,7 +205,8 @@ async def get_performance(
     """Get portfolio performance metrics and chart data"""
     try:
         transactions = db.query(Transaction).filter(
-            Transaction.user_id == current_user.id
+            Transaction.user_id == current_user.id,
+            Transaction.transaction_type != 'other'  # Add this filter
         ).all()
         
         if not transactions:
@@ -244,7 +248,8 @@ async def get_annual_returns(
     """Get annual returns data for the portfolio"""
     try:
         transactions = db.query(Transaction).filter(
-            Transaction.user_id == current_user.id
+            Transaction.user_id == current_user.id,
+            Transaction.transaction_type != 'other'  # Add this filter
         ).all()
         
         if not transactions:
@@ -299,7 +304,6 @@ async def get_annual_returns(
                 'return': year_return
             })
         
-        print("response: ", annual_returns)
         return {
             "annual_returns": annual_returns
         }

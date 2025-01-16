@@ -44,7 +44,7 @@ async def upload_file(
         
         # Process the CSV file
         transactions_data = process_csv_file(df, broker=broker.lower())
-        
+
         # Create transaction records
         for data in transactions_data:
             # Check for existing transaction based on user_id, date, stock, transaction_type, units, and amount

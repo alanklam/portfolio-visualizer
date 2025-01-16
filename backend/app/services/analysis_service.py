@@ -163,14 +163,15 @@ class FinanceCalculator:
                 }
             
             # Handle different transaction types
-            if transaction_type in ['buy', 'reinvest']:
+            if transaction_type in ['buy', 'reinvest', 'stock_transfer']:  
                 if pd.notna(row['units']) and pd.notna(row['price']):
                     holdings[symbol]['units'] += row['units']
                     holdings[symbol]['cost_basis'] += (row['units'] * row['price'] + row['fee'])
                     
-                # Update cash position
-                total_cost = abs(row['amount']) if pd.notna(row['amount']) else (row['units'] * row['price'] + row['fee'])
-                holdings['CASH EQUIVALENTS']['units'] -= total_cost
+                # debit on cash position for purchase (exclude stock_transfer)
+                if transaction_type != 'stock_transfer':
+                    total_cost = abs(row['amount']) if pd.notna(row['amount']) and row['amount']!=0 else (row['units'] * row['price'] + row['fee'])
+                    holdings['CASH EQUIVALENTS']['units'] -= total_cost
                 
             elif transaction_type == 'sell':
                 if pd.notna(row['units']) and pd.notna(row['price']):
@@ -179,34 +180,40 @@ class FinanceCalculator:
                         holdings[symbol]['cost_basis'] -= (row['units'] * cost_per_unit)
                     holdings[symbol]['units'] -= row['units']
                     
-                # Update cash position
-                proceeds = abs(row['amount']) if pd.notna(row['amount']) else (row['units'] * row['price'] - row['fee'])
+                # credit on cash position for sale
+                proceeds = abs(row['amount']) if pd.notna(row['amount']) and row['amount'] != 0 else (row['units'] * row['price'] - row['fee'])
                 holdings['CASH EQUIVALENTS']['units'] += proceeds
                 
             elif transaction_type == 'transfer':
                 if row['security_type'] == 'cash':
-                    holdings['CASH EQUIVALENTS']['units'] += row['amount'] if pd.notna(row['amount']) else row['units']
+                    holdings['CASH EQUIVALENTS']['units'] += row['amount'] if pd.notna(row['amount']) and row['amount']!=0 else row['units']
                     
-            elif transaction_type == 'dividend' and transaction_type != 'reinvest':
-                holdings['CASH EQUIVALENTS']['units'] += abs(row['amount']) if pd.notna(row['amount']) else row['units']
+            elif transaction_type == 'dividend':
+                holdings['CASH EQUIVALENTS']['units'] += abs(row['amount']) if pd.notna(row['amount']) and row['amount']!=0 else row['units']
                 
             elif transaction_type == 'interest':
-                holdings['CASH EQUIVALENTS']['units'] += abs(row['amount']) if pd.notna(row['amount']) else row['units']
+                holdings['CASH EQUIVALENTS']['units'] += abs(row['amount']) if pd.notna(row['amount']) and row['amount']!=0 else row['units']
                 
             # Handle option transactions
             elif transaction_type in ['sell_to_open', 'sell_to_close', 'buy_to_open', 'buy_to_close']:
-                premium = abs(row['amount']) if pd.notna(row['amount']) else (row['units'] * row['price'] - row['fee'])
+                premium = abs(row['amount']) if pd.notna(row['amount']) and row['amount']!= 0 else (row['units'] * row['price'] - row['fee'])
                 if transaction_type in ['sell_to_open', 'sell_to_close']:
                     holdings['CASH EQUIVALENTS']['units'] += premium
                 else:
                     holdings['CASH EQUIVALENTS']['units'] -= premium
+
+            # Fidelity logic, adjust stock units for stock splits
+            elif transaction_type == 'split' and row['security_type'] == 'stock':
+                if pd.notna(row['units']) and row['units'] != 0:
+                    holdings[symbol]['units'] += row['units']
         
         # Update cash position cost basis
         holdings['CASH EQUIVALENTS']['cost_basis'] = holdings['CASH EQUIVALENTS']['units']
         
         # Calculate market values and weights
         holdings = self._calculate_portfolio_values(holdings, calc_date=as_of_date)
-        
+        #print("final: ", holdings['CASH EQUIVALENTS']['units'])
+
         return holdings
         
     def calculate_gain_loss(self, df: pd.DataFrame) -> dict:
@@ -233,7 +240,7 @@ class FinanceCalculator:
             
             # Process each transaction
             for _, txn in symbol_txns.iterrows():
-                if txn['transaction_type'].lower() in ['buy', 'reinvest']:
+                if txn['transaction_type'].lower() in ['buy', 'reinvest', 'stock_transfer']:
                     running_units += txn['units']
                     total_cost_basis += (txn['units'] * txn['price'] + txn['fee'])
                 
@@ -271,7 +278,7 @@ class FinanceCalculator:
             # Calculate unrealized gain/loss
             market_value = current_holding['units'] * current_holding['last_price']
             unrealized_gain_loss = market_value - total_cost_basis if current_holding['units'] > 0 else 0
-            
+
             # For cash and fixed income, adjusted cost basis equals total cost basis
             adjusted_cost_basis = total_cost_basis
             if symbol not in ['CASH EQUIVALENTS', 'FIXED INCOME']:
@@ -400,12 +407,13 @@ class FinanceCalculator:
                     }
                 
                 # Process transaction based on type
-                if transaction_type in ['buy', 'reinvest']:
+                if transaction_type in ['buy', 'reinvest', 'stock_transfer']: 
                     if pd.notna(row['units']) and pd.notna(row['price']):
                         holdings[symbol]['units'] += row['units']
                         holdings[symbol]['cost_basis'] += (row['units'] * row['price'] + row['fee'])
-                    total_cost = abs(row['amount']) if pd.notna(row['amount']) else (row['units'] * row['price'] + row['fee'])
-                    holdings['CASH EQUIVALENTS']['units'] -= total_cost
+                    if transaction_type != 'stock_transfer':  # Don't affect cash for stock_transfer
+                        total_cost = abs(row['amount']) if pd.notna(row['amount']) and row['amount']!=0 else (row['units'] * row['price'] + row['fee'])
+                        holdings['CASH EQUIVALENTS']['units'] -= total_cost
                     
                 elif transaction_type == 'sell':
                     if pd.notna(row['units']) and pd.notna(row['price']):
@@ -413,26 +421,31 @@ class FinanceCalculator:
                             cost_per_unit = holdings[symbol]['cost_basis'] / holdings[symbol]['units']
                             holdings[symbol]['cost_basis'] -= (row['units'] * cost_per_unit)
                         holdings[symbol]['units'] -= row['units']
-                    proceeds = abs(row['amount']) if pd.notna(row['amount']) else (row['units'] * row['price'] - row['fee'])
+                    proceeds = abs(row['amount']) if pd.notna(row['amount']) and row['amount'] != 0 else (row['units'] * row['price'] - row['fee'])
                     holdings['CASH EQUIVALENTS']['units'] += proceeds
                     
                 elif transaction_type == 'transfer':
                     if row['security_type'] == 'cash':
-                        holdings['CASH EQUIVALENTS']['units'] += row['amount'] if pd.notna(row['amount']) else row['units']
+                        holdings['CASH EQUIVALENTS']['units'] += row['amount'] if pd.notna(row['amount']) and row['amount']!=0 else row['units']
                         
-                elif transaction_type == 'dividend' and transaction_type != 'reinvest':
-                    holdings['CASH EQUIVALENTS']['units'] += abs(row['amount']) if pd.notna(row['amount']) else row['units']
+                elif transaction_type == 'dividend':
+                    holdings['CASH EQUIVALENTS']['units'] += abs(row['amount']) if pd.notna(row['amount']) and row['amount']!=0 else row['units']
                     
                 elif transaction_type == 'interest':
-                    holdings['CASH EQUIVALENTS']['units'] += abs(row['amount']) if pd.notna(row['amount']) else row['units']
+                    holdings['CASH EQUIVALENTS']['units'] += abs(row['amount']) if pd.notna(row['amount']) and row['amount']!=0 else row['units']
                     
                 elif transaction_type in ['sell_to_open', 'sell_to_close', 'buy_to_open', 'buy_to_close']:
-                    premium = abs(row['amount']) if pd.notna(row['amount']) else (row['units'] * row['price'] - row['fee'])
+                    premium = abs(row['amount']) if pd.notna(row['amount']) and row['amount'] != 0 else (row['units'] * row['price'] - row['fee'])
                     if transaction_type in ['sell_to_open', 'sell_to_close']:
                         holdings['CASH EQUIVALENTS']['units'] += premium
                     else:
                         holdings['CASH EQUIVALENTS']['units'] -= premium
             
+                # Fidelity logic, adjust stock units for stock splits
+                elif transaction_type == 'split' and row['security_type'] == 'stock':
+                    if pd.notna(row['units']) and row['units'] != 0:
+                        holdings[symbol]['units'] += row['units']
+
             # Update cash position cost basis
             holdings['CASH EQUIVALENTS']['cost_basis'] = holdings['CASH EQUIVALENTS']['units']
             
@@ -512,13 +525,15 @@ class FinanceCalculator:
             # Calculate total portfolio value (includes cash, stocks, and fixed income)
             total_value = sum(holding['market_value'] for holding in holdings.values())
             
-            # Calculate invested amount up to this date (only cash transfers)
+            # Calculate invested amount up to this date (only cash transfers, and employee stock transfer in Etrade)
             transactions_to_date = df[pd.to_datetime(df['date']).dt.date <= calc_date]
             invested_amount = 0
             for _, txn in transactions_to_date.iterrows():
                 if txn['transaction_type'].lower() == 'transfer' and txn['security_type'] == 'cash':
                     transfer_amount = txn['amount'] if pd.notna(txn['amount']) else txn['units']
                     invested_amount += transfer_amount
+                elif txn['transaction_type'].lower() == 'stock_transfer':
+                    invested_amount += txn['price'] * txn['units']
             
             dates.append(calc_date)
             daily_values.append(float(total_value))  # Ensure float type

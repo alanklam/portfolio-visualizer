@@ -41,7 +41,6 @@ def process_csv_file(df: pd.DataFrame, broker: str = 'schwab') -> List[Dict[str,
             elif broker.lower() == 'fidelity':
                 transaction = data_service._process_fidelity_transaction(row)
             elif broker.lower() == 'etrade':
-                print(row)
                 transaction = data_service._process_etrade_transaction(row)
             else:
                 raise ValueError(f"Unsupported broker: {broker}")
@@ -83,16 +82,16 @@ class DataService:
     VALID_TRANSACTION_TYPES = [
         'buy', 'sell', 'reinvest', 'assigned', 'expired',
         'sell_to_open', 'buy_to_open', 'sell_to_close', 'buy_to_close',
-        'adjustment', 'dividend', 'interest', 'transfer', 'split', 'other'
+        'adjustment', 'dividend', 'interest', 'transfer', 'split', 'stock_transfer', 'other'
     ]
     
-    VALID_SECURITY_TYPES = ['stock', 'option', 'cash', 'fixed_income']
+    VALID_SECURITY_TYPES = ['stock', 'option', 'cash', 'fixed_income', 'other']
     VALID_OPTION_TYPES = ['call', 'put', None]
     NON_TRADE_TYPES = ['expired', 'dividend', 'interest', 'transfer']
     CASH_AFFECTING_TYPES = ['dividend', 'interest', 'transfer']
 
     # Constants from CSVParser
-    CASH_EQUIVALENTS = ['SWVXX', 'SPAXX']
+    CASH_EQUIVALENTS = ['SWVXX', 'SPAXX', 'MSBNK']
     FIXED_INCOME_PATTERNS = [
         r'TREAS BILL', r'TREASURY BILL', r'T-BILL',
         r'TREAS NOTE', r'TREASURY NOTE', r'T-NOTE',
@@ -144,12 +143,21 @@ class DataService:
             
         symbol = str(symbol).strip().upper()
         
+        # hard code this for unique case
+        if symbol == '5801689QK':
+            return 'T'
+        
         if security_type == 'option':
             # Remove leading dash if present
             symbol = symbol.lstrip('-')
             
             # Handle compact option format like BAC220204P45
             match = re.match(r'^([A-Z]+)\d{6}[CP]\d+', symbol)
+            if match:
+                return match.group(1)
+                
+            # Handle edge case format like T1220422P23.5 
+            match = re.match(r'^([A-Z]+)\d{7}[CP]\d+(\.\d+)?', symbol)
             if match:
                 return match.group(1)
             
@@ -163,6 +171,8 @@ class DataService:
             symbol = re.sub(r'[\s_][CP]\d+(\.\d+)?', '', symbol)
             symbol = re.sub(r'[\s_](Call|Put)', '', symbol, flags=re.IGNORECASE)
             symbol = re.sub(r'[\s_]\d+(\.\d+)?[\s_]?[CP]?', '', symbol)
+            # Remove any remaining decimal point patterns like 23.5 
+            symbol = re.sub(r'\d+\.\d+', '', symbol)
             
             # Remove any trailing year numbers (e.g. TSLA25 -> TSLA)
             symbol = re.sub(r'\d{2}$', '', symbol)
@@ -170,7 +180,7 @@ class DataService:
             # Take only the first part (usually the underlying symbol)
             symbol = symbol.split()[0]
         
-        return symbol.strip()
+        return symbol
 
     @staticmethod
     def standardize_dates(date_str: str) -> datetime:
@@ -313,7 +323,7 @@ class DataService:
             symbol = 'CASH EQUIVALENTS'  # Set to a standard name for cash equivalents
 
         # Clean symbol for non-fixed-income securities
-        if security_type != 'fixed_income':
+        if security_type not in ['fixed_income', 'cash']:
             symbol = self.clean_symbol(symbol, security_type)
 
         # Handle money transfers
@@ -384,7 +394,7 @@ class DataService:
             'BOND INTEREST': 'interest',
             'CREDIT INTEREST': 'interest',
             'MONEYLINK TRANSFER': 'transfer',
-            'STOCK SPLIT': 'split'
+            'STOCK SPLIT': 'split' #placeholder for now
         }
         return transaction_map.get(action.upper(), 'other')
 
@@ -398,7 +408,6 @@ class DataService:
             std_row[std_key] = value
 
         action = str(std_row.get('Action', '')).upper()
-        description = str(std_row.get('Description', '')).upper()
         
         # Check for cash transfer condition first
         if 'PURCHASE INTO CORE' in action and 'MORNING TRADE' not in action:
@@ -423,7 +432,7 @@ class DataService:
                 'REINVESTMENT': 'reinvest',
                 'DIVIDEND': 'dividend',
                 'EXPIRED': 'expired',
-                'STOCK SPLIT': 'split',
+                'DISTRIBUTION': 'split',
                 'TRANSFER': 'transfer'
             }
             
@@ -447,19 +456,16 @@ class DataService:
         description = str(std_row.get('Description', '')).lower()
         if 'option' in description or 'call' in description or 'put' in description:
             security_type = 'option'
-        elif self.is_fixed_income_symbol(std_row['Symbol']):
+        elif self.is_fixed_income_symbol(std_row['Symbol'].strip()):
             security_type = 'fixed_income'
-        elif std_row['Symbol'] in self.CASH_EQUIVALENTS:
-            security_type = 'cash'
-        
-        # Clean symbol
-        symbol = self.clean_symbol(std_row['Symbol'], security_type)
-
-        # Handle fixed income and cash equivalents
-        if security_type == 'fixed_income':
             symbol = 'FIXED INCOME'
-        elif security_type == 'cash':
+        elif std_row['Symbol'].strip() in self.CASH_EQUIVALENTS:
+            security_type = 'cash'
             symbol = 'CASH EQUIVALENTS'
+
+        # Clean symbol
+        if security_type not in ['fixed_income', 'cash']:
+            symbol = self.clean_symbol(std_row['Symbol'], security_type)
 
         # Extract option type
         option_type = None
@@ -497,32 +503,49 @@ class DataService:
 
     def _process_etrade_transaction(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """Process E*TRADE transaction format"""
-        action = str(row.get('TransactionType', '')).upper()
-        
-        # Map transaction types
-        transaction_map = {
-            'BOUGHT': 'buy',
-            'SOLD': 'sell',
-            'DIVIDEND REINVESTMENT': 'reinvest',
-            'DIVIDEND': 'dividend',
-            'SOLD SHORT': 'sell_to_open',
-            'BOUGHT TO OPEN': 'buy_to_open',
-            'SOLD TO CLOSE': 'sell_to_close',
-            'BOUGHT TO COVER': 'buy_to_close',
-            'ADJUSTMENT': 'adjustment',
-            'STOCK SPLIT': 'split',
-            'TRANSFER': 'transfer'
-        }
-        transaction_type = transaction_map.get(action, 'other')
-        
+        # Filter out unwanted transactions first
+        if (row.get('TransactionType', '').strip().upper() == 'ADJUSTMENT' and 
+            row.get('SecurityType', '').strip().upper() == 'UNKNOWN'):
+            return None
+
+        action = str(row.get('TransactionType', '')).strip().upper()
+        description = str(row.get('Description', '')).upper()
+
+        # Check for stock transfer condition
+        if action == 'ADJUSTMENT' and ('RAND' in description or 'ALLOCATE SHARES' in description):
+            transaction_type = 'stock_transfer'
+        elif action == 'DIVIDEND' and ('REIN' in description or 'DIVIDEND REINVESTMENT' in description):
+            transaction_type = 'reinvest'
+        else:
+            # Map transaction types
+            transaction_map = {
+                'BOUGHT': 'buy',
+                'SOLD': 'sell',
+                'DIVIDEND': 'dividend',
+                'SOLD SHORT': 'sell_to_open',
+                'BOUGHT TO OPEN': 'buy_to_open',
+                'SOLD TO CLOSE': 'sell_to_close',
+                'BOUGHT TO COVER': 'buy_to_close',
+                'ADJUSTMENT': 'adjustment',
+                'STOCK SPLIT': 'split', #placeholder for now
+                'INTEREST': 'interest',
+                'TRANSFER': 'transfer'
+            }
+            transaction_type = transaction_map.get(action, 'other')
+            
         # Determine security type
-        security_type = 'stock'
+        security_type = 'other'
         description = str(row.get('Description', '')).lower()
-        if 'option' in description or 'call' in description or 'put' in description:
+        securitytype = str(row.get('SecurityType', '')).strip().lower()
+        if 'eq' in securitytype:
+            security_type = 'stock'
+        elif 'optn' in securitytype or 'option' in description or 'call' in description or 'put' in description:
             security_type = 'option'
-        elif self.is_fixed_income_symbol(row['Symbol']):
+        elif 'interest on cash balance' in description:
+            security_type = 'cash'
+        elif self.is_fixed_income_symbol(row['Symbol'].strip()):
             security_type = 'fixed_income'
-        elif row['Symbol'] in self.CASH_EQUIVALENTS:
+        elif row['Symbol'].strip() in self.CASH_EQUIVALENTS:
             security_type = 'cash'
                 
         # Handle fixed income and cash equivalents
@@ -532,7 +555,7 @@ class DataService:
             symbol = 'CASH EQUIVALENTS'
         
         # Clean symbol
-        if security_type != 'fixed_income':
+        if security_type not in ['fixed_income', 'cash']:
             symbol = self.clean_symbol(row['Symbol'], security_type)
 
         # Handle transfers
@@ -549,7 +572,7 @@ class DataService:
         
         # Handle adjustments by fetching historical prices
         price = float(str(row.get('Price', 0)).replace('$', '').replace(',', ''))
-        if transaction_type == 'adjustment' and price == 0:
+        if transaction_type in ['stock_transfer', 'reinvest'] and price == 0:
             try:
                 date = pd.to_datetime(row['TransactionDate'])
                 last_day_prev_month = (date.replace(day=1) - timedelta(days=1))
@@ -573,7 +596,7 @@ class DataService:
             'date': self.standardize_dates(row['TransactionDate']),
             'stock': symbol,
             'transaction_type': transaction_type,
-            'units': quantity,
+            'units': abs(quantity),
             'price': price,
             'fee': float(str(row.get('Commission', 0)).replace('$', '').replace(',', '')),
             'option_type': 'call' if 'call' in description else 'put' if 'put' in description else None,
