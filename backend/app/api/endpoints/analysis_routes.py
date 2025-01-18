@@ -22,6 +22,12 @@ async def get_holdings(
 ):
     """Get current portfolio holdings, todo: cache for 1 minute"""
     try:
+        # Make sure we have user_id before any processing
+        if not current_user or not current_user.id:
+            raise HTTPException(status_code=401, detail="Invalid user authentication")
+            
+        user_id = str(current_user.id)
+        
         transactions = db.query(Transaction).filter(
             Transaction.user_id == current_user.id,
             Transaction.transaction_type != 'other'  # Add this filter
@@ -44,7 +50,11 @@ async def get_holdings(
         } for t in transactions])
         
         calculator = FinanceCalculator()
-        holdings = calculator.calculate_stock_holdings(df)
+        holdings = calculator.calculate_stock_holdings(
+            df, 
+            start_date=datetime.now().date(),
+            user_id=str(current_user.id)  # Pass user_id to calculator
+        )
         
         # Update portfolio table
         existing_portfolios = {
@@ -105,6 +115,12 @@ async def get_gain_loss(
 ):
     """Get portfolio gain/loss analysis"""
     try:
+        # Make sure we have user_id before any processing
+        if not current_user or not current_user.id:
+            raise HTTPException(status_code=401, detail="Invalid user authentication")
+            
+        user_id = str(current_user.id)
+        
         transactions = db.query(Transaction).filter(
             Transaction.user_id == current_user.id,
             Transaction.transaction_type != 'other'  # Add this filter
@@ -127,7 +143,7 @@ async def get_gain_loss(
         } for t in transactions])
             
         calculator = FinanceCalculator()
-        return calculator.calculate_gain_loss(df)
+        return calculator.calculate_gain_loss(df, user_id=str(current_user.id))
         
     except Exception as e:
         logger.error(f"Error in get_gain_loss: {str(e)}", exc_info=True)
@@ -143,6 +159,12 @@ async def get_allocation(
 ):
     """Get portfolio allocation chart data"""
     try:
+        # Make sure we have user_id before any processing
+        if not current_user or not current_user.id:
+            raise HTTPException(status_code=401, detail="Invalid user authentication")
+            
+        user_id = str(current_user.id)
+        
         transactions = db.query(Transaction).filter(
             Transaction.user_id == current_user.id,
             Transaction.transaction_type != 'other'  # Add this filter
@@ -170,13 +192,25 @@ async def get_allocation(
         } for t in transactions])
         
         calculator = FinanceCalculator()
-        holdings = calculator.calculate_stock_holdings(df)
+        # Explicitly pass current date to get holdings
+        current_date = datetime.now().date()
+        holdings = calculator.calculate_stock_holdings(
+            df, 
+            start_date=current_date,
+            user_id=str(current_user.id)
+        )
+        
+        # Filter out zero market value positions for pie chart
+        filtered_holdings = {
+            symbol: data for symbol, data in holdings.items() 
+            if data.get('market_value', 0) > 0
+        }
         
         # Prepare data for pie chart
-        if holdings:
+        if filtered_holdings:
             data = {
-                "values": [holding.get("market_value", 0) for holding in holdings.values()],
-                "labels": list(holdings.keys())
+                "values": [holding.get("market_value", 0) for holding in filtered_holdings.values()],
+                "labels": list(filtered_holdings.keys())
             }
         else:
             data = {
@@ -204,6 +238,12 @@ async def get_performance(
 ):
     """Get portfolio performance metrics and chart data"""
     try:
+        # Make sure we have user_id before any processing
+        if not current_user or not current_user.id:
+            raise HTTPException(status_code=401, detail="Invalid user authentication")
+            
+        user_id = str(current_user.id)
+        
         transactions = db.query(Transaction).filter(
             Transaction.user_id == current_user.id,
             Transaction.transaction_type != 'other'  # Add this filter
@@ -231,7 +271,7 @@ async def get_performance(
         } for t in transactions])
         
         calculator = FinanceCalculator()
-        return calculator.calculate_performance(df)
+        return calculator.calculate_performance(df, user_id=str(current_user.id))
         
     except Exception as e:
         logger.error(f"Error in get_performance: {str(e)}")
@@ -247,6 +287,12 @@ async def get_annual_returns(
 ):
     """Get annual returns data for the portfolio"""
     try:
+        # Make sure we have user_id before any processing
+        if not current_user or not current_user.id:
+            raise HTTPException(status_code=401, detail="Invalid user authentication")
+            
+        user_id = str(current_user.id)
+        
         transactions = db.query(Transaction).filter(
             Transaction.user_id == current_user.id,
             Transaction.transaction_type != 'other'  # Add this filter
@@ -284,11 +330,24 @@ async def get_annual_returns(
             start_date = max(datetime(year, 1, 1).date(), min_date)
             end_date = min(datetime(year, 12, 31).date(), max_date)
 
-            # Calculate holdings at start and end of year
-            price_data1 = calculator.calculate_stock_holdings_batch(df, start_date=start_date - timedelta(days=5), end_date=start_date, freq="D")
+            # Add user_id to both calls
+            price_data1 = calculator.calculate_stock_holdings(
+                df, 
+                start_date=start_date - timedelta(days=5), 
+                end_date=start_date, 
+                freq="D",
+                user_id=str(current_user.id)
+            )
             last_date = sorted(price_data1.keys())[-1]
             start_holdings = price_data1[last_date]
-            price_data2 = calculator.calculate_stock_holdings_batch(df, start_date=end_date - timedelta(days=5), end_date=end_date, freq="D")
+            
+            price_data2 = calculator.calculate_stock_holdings(
+                df, 
+                start_date=end_date - timedelta(days=5), 
+                end_date=end_date, 
+                freq="D",
+                user_id=str(current_user.id)
+            )
             last_date = sorted(price_data2.keys())[-1]
             end_holdings = price_data2[last_date]
 

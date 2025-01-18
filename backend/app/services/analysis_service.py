@@ -4,8 +4,68 @@ from datetime import datetime, timedelta, date
 import yfinance as yf
 import logging
 import warnings
+from typing import Dict, List, Tuple
+from .price_service import PriceManager
+from .transaction_service import TransactionManager
 
 logger = logging.getLogger(__name__)
+
+class HoldingsCache:
+    """Cache for holdings calculations"""
+    def __init__(self):
+        self._cache = {}
+        self._last_calc = {}
+        self._calc_interval = timedelta(minutes=1)  # Cache holdings for 1 minute
+
+    def get(self, key: Tuple[date, str]) -> dict:
+        """Get cached holdings if not expired"""
+        if key in self._cache and datetime.now() - self._last_calc[key] < self._calc_interval:
+            return self._cache[key]
+        return None
+
+    def set(self, key: Tuple[date, str], value: dict):
+        """Cache holdings calculation result"""
+        self._cache[key] = value
+        self._last_calc[key] = datetime.now()
+
+    def clear(self):
+        """Clear expired cache entries"""
+        current_time = datetime.now()
+        self._cache = {
+            k: v for k, v in self._cache.items()
+            if current_time - self._last_calc[k] < self._calc_interval
+        }
+        self._last_calc = {
+            k: v for k, v in self._last_calc.items()
+            if current_time - v < self._calc_interval
+        }
+
+class TransactionProcessor:
+    """Process and optimize transaction calculations"""
+    def __init__(self, df: pd.DataFrame):
+        self.df = df
+        self._process_transactions()
+
+    def _process_transactions(self):
+        """Pre-process transactions for faster lookup"""
+        # Convert date column to datetime if not already
+        self.df['date'] = pd.to_datetime(self.df['date'])
+        # Sort transactions by date
+        self.df = self.df.sort_values('date')
+        # Create efficient date index
+        self.df.set_index('date', inplace=True, drop=False)
+        # Create symbol groups
+        self.symbol_groups = self.df.groupby('stock')
+        # Store unique symbols
+        self.symbols = set(self.df['stock'].unique()) - {'CASH EQUIVALENTS'}
+
+    def get_transactions_until(self, calc_date: date) -> pd.DataFrame:
+        """Get transactions up to a specific date efficiently"""
+        return self.df[self.df['date'].dt.date <= calc_date]
+
+    def get_symbols_requiring_prices(self) -> List[str]:
+        """Get list of symbols requiring price data"""
+        return sorted(list(self.symbols - {'FIXED INCOME'}))
 
 class FinanceCalculator:
     """Utility class for financial calculations"""
@@ -20,59 +80,16 @@ class FinanceCalculator:
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self._price_cache = {}  # Cache for storing downloaded prices
-        self._last_download_time = None
-        self._download_interval = timedelta(minutes=15)  # Refresh cache every 15 minutes
-    
+        self.price_manager = PriceManager()  # Initialize price manager
+        self.holdings_cache = HoldingsCache()
+        self.transaction_manager = TransactionManager()  # Add transaction manager
+
     def get_current_price(self, symbol: str, as_of_date: date = None) -> float:
-        """Get stock price from Yahoo Finance as of a specific date with caching"""
-        try:
-            if as_of_date is None:
-                as_of_date = datetime.now().date()
-            
-            # Check cache first
-            cache_key = (symbol, as_of_date)
-            current_time = datetime.now()
-            
-            # Return cached price if available and cache is not expired
-            if (cache_key in self._price_cache and 
-                self._last_download_time and 
-                current_time - self._last_download_time < self._download_interval):
-                return self._price_cache[cache_key]
-            
-            # Download data with a 5-day window to handle non-trading days
-            # with warnings.catch_warnings():
-            #     warnings.simplefilter("ignore")
-            end_date = as_of_date + timedelta(days=1)
-            start_date = as_of_date - timedelta(days=5)
-            
-            # ticker = yf.Ticker(symbol)
-            # df = ticker.history(start=start_date,end=end_date,interval='1d')
-            df = yf.download(symbol, 
-                            start=start_date,
-                            end=end_date,
-                            progress=False,
-                            interval='1d')
-            
-            if df.empty:
-                self.logger.warning(f"No price data found for {symbol}")
-                return 0.0
-            
-            # Get the last available price up to as_of_date
-            df = df[df.index <= pd.Timestamp(as_of_date)]
-            if not df.empty:
-                price = df['Close'].iloc[-1]
-                # Update cache
-                self._price_cache[cache_key] = price
-                self._last_download_time = current_time
-                return price
-            
-            return 0.0
-                
-        except Exception as e:
-            self.logger.error(f"Error fetching price for {symbol}: {str(e)}")
-            return 0.0
-            
+        """Get stock price from cache or Yahoo Finance"""
+        if as_of_date is None:
+            as_of_date = datetime.now().date()
+        return self.price_manager.get_price(symbol, as_of_date)
+    
     def _calculate_portfolio_values(self, holdings: dict, prices_df: pd.DataFrame = None, calc_date: date = None) -> dict:
         """Helper function to calculate portfolio values and weights
         
@@ -110,7 +127,7 @@ class FinanceCalculator:
                         data['last_price'] = 0.0
                 else:
                     # Get current price
-                    data['last_price'] = self.get_current_price(symbol, calc_date)
+                    data['last_price'] = self.price_manager.get_price(symbol, calc_date)
             
             market_value = float(data['units']) * float(data['last_price'])
             total_market_value += market_value
@@ -124,112 +141,214 @@ class FinanceCalculator:
         
         return holdings
 
-    def calculate_stock_holdings(self, df: pd.DataFrame, as_of_date: date = None) -> dict:
-        """Calculate current stock holdings from transaction history"""
+    def calculate_stock_holdings(self, df: pd.DataFrame, start_date: date = None, end_date: date = None, freq: str = 'D', user_id: str = None) -> dict:
+        """Calculate stock holdings for given date(s)
+        
+        Args:
+            df: Transaction DataFrame
+            start_date: Start date for calculations. If None, uses current date
+            end_date: End date for calculations. If None, uses start_date
+            freq: Frequency for calculations ('D' for daily, 'W' for weekly, 'M' for monthly)
+                Only used when both start_date and end_date are provided
+            user_id: User ID for transaction processing
+                
+        Returns:
+            If only start_date provided: Dictionary of holdings for that date
+            If start_date and end_date provided: Dictionary with dates as keys and holdings dictionaries as values
+        """
         if df.empty:
+            return {} if end_date is None else {start_date: {}}
+
+        if user_id is None:
+            self.logger.warning("No user_id provided for holdings calculation")
+            user_id = "default"
+
+        # Pre-process transactions
+        processed_df = self.transaction_manager.preprocess_transactions(df.copy(), user_id=user_id)
+
+        # Initialize processor with processed transactions
+        processor = TransactionProcessor(processed_df)
+
+        # Handle dates
+        if start_date is None:
+            start_date = datetime.now().date()
+        if end_date is None:
+            date_range = pd.date_range(start=start_date, end=start_date, freq=freq, inclusive='both')
+        else:
+            date_range = pd.date_range(start=start_date, end=end_date, freq=freq, inclusive='both')
+
+        if date_range.empty:
             return {}
-            
-        if as_of_date is None:
-            as_of_date = datetime.now().date()
-            
-        # Filter transactions up to as_of_date
-        df = df[pd.to_datetime(df['date']).dt.date <= as_of_date].copy()
+
+        # Get symbols requiring prices
+        price_symbols = processor.get_symbols_requiring_prices()
+
+        # Get prices in batch
+        prices_df = pd.DataFrame()
+        if price_symbols:
+            try:
+                prices_df = self.price_manager.get_prices_batch(
+                    price_symbols,
+                    start_date - timedelta(days=5),
+                    end_date + timedelta(days=1) if end_date else start_date + timedelta(days=1)
+                )
+            except Exception as e:
+                self.logger.error(f"Error in batch price download: {str(e)}")
+                return {} if end_date is None else {start_date: {}}
+
+        holdings_by_date = {}
         
-        holdings = {}
-        total_market_value = 0.0
-        
-        # Initialize cash position
-        holdings['CASH EQUIVALENTS'] = {
-            'units': 0.0,
-            'security_type': 'cash',
-            'cost_basis': 0.0,
-            'last_price': 1.0,
-            'last_update': as_of_date
+        # Calculate holdings for each date
+        for calc_date in date_range:
+            calc_date = calc_date.date()
+            
+            # Check cache first
+            cache_key = (calc_date, 'holdings')
+            cached_holdings = self.holdings_cache.get(cache_key)
+            if cached_holdings is not None:
+                holdings_by_date[calc_date] = cached_holdings
+                continue
+
+            # Get transactions up to date efficiently
+            transactions_to_date = processor.get_transactions_until(calc_date)
+            
+            # Calculate holdings
+            holdings = self._calculate_holdings_for_date(
+                transactions_to_date,
+                calc_date,
+                prices_df
+            )
+            
+            # Cache the result
+            self.holdings_cache.set(cache_key, holdings)
+            holdings_by_date[calc_date] = holdings
+
+        # Clear expired cache entries
+        self.holdings_cache.clear()
+
+        return holdings_by_date[start_date] if end_date is None else holdings_by_date
+
+    def _calculate_holdings_for_date(self, transactions: pd.DataFrame, calc_date: date, prices_df: pd.DataFrame) -> dict:
+        """Calculate holdings for a specific date using vectorized operations where possible"""
+        holdings = {
+            'CASH EQUIVALENTS': {
+                'units': 0.0,
+                'security_type': 'cash',
+                'cost_basis': 0.0,
+                'last_price': 1.0,
+                'last_update': calc_date
+            }
         }
+
+        # Group transactions by symbol and type for vectorized calculations
+        grouped = transactions.groupby(['stock', 'transaction_type'])
         
-        # Process transactions chronologically
-        for _, row in df.sort_values('date').iterrows():
-            symbol = row['stock']
-            transaction_type = row['transaction_type'].lower()
-            
-            # Initialize holding if not exists
+        # Calculate positions using vectorized operations
+        for (symbol, txn_type), group in grouped:
             if symbol not in holdings and symbol != 'CASH EQUIVALENTS':
                 holdings[symbol] = {
                     'units': 0.0,
-                    'security_type': row['security_type'],
+                    'security_type': group.iloc[0]['security_type'],
                     'cost_basis': 0.0,
                     'last_price': 0.0,
-                    'last_update': row['date']
+                    'last_update': calc_date
                 }
             
-            # Handle different transaction types
-            if transaction_type in ['buy', 'reinvest', 'stock_transfer']:  
-                if pd.notna(row['units']) and pd.notna(row['price']):
-                    holdings[symbol]['units'] += row['units']
-                    holdings[symbol]['cost_basis'] += (row['units'] * row['price'] + row['fee'])
-                    
-                # debit on cash position for purchase (exclude stock_transfer)
-                if transaction_type != 'stock_transfer':
-                    total_cost = abs(row['amount']) if pd.notna(row['amount']) and row['amount']!=0 else (row['units'] * row['price'] + row['fee'])
-                    holdings['CASH EQUIVALENTS']['units'] -= total_cost
+            if txn_type.lower() in ['buy', 'reinvest', 'stock_transfer']:
+                mask = pd.notna(group['units']) & pd.notna(group['price'])
+                holdings[symbol]['units'] += group[mask]['units'].sum()
+                holdings[symbol]['cost_basis'] += (
+                    (group[mask]['units'] * group[mask]['price']).sum() + 
+                    group[mask]['fee'].sum()
+                )
                 
-            elif transaction_type == 'sell':
-                if pd.notna(row['units']) and pd.notna(row['price']):
-                    if holdings[symbol]['units'] > 0:
-                        cost_per_unit = holdings[symbol]['cost_basis'] / holdings[symbol]['units']
-                        holdings[symbol]['cost_basis'] -= (row['units'] * cost_per_unit)
-                    holdings[symbol]['units'] -= row['units']
-                    
-                # credit on cash position for sale
-                proceeds = abs(row['amount']) if pd.notna(row['amount']) and row['amount'] != 0 else (row['units'] * row['price'] - row['fee'])
+                if txn_type != 'stock_transfer':
+                    cash_impact = group.apply(
+                        lambda x: abs(x['amount']) if pd.notna(x['amount']) and x['amount']!=0 
+                        else (x['units'] * x['price'] + x['fee']),
+                        axis=1
+                    ).sum()
+                    holdings['CASH EQUIVALENTS']['units'] -= cash_impact
+            
+            elif txn_type.lower() == 'sell':
+                mask = pd.notna(group['units']) & pd.notna(group['price'])
+                # if holdings[symbol]['units'] > 0: #comment out logic for debugging
+                sell_units = group[mask]['units'].sum()
+                if sell_units > 0:
+                    # Calculate cost basis per unit
+                    cost_per_unit = holdings[symbol]['cost_basis'] / holdings[symbol]['units']
+                    # Adjust cost basis
+                    holdings[symbol]['cost_basis'] -= (sell_units * cost_per_unit)
+                    holdings[symbol]['units'] -= sell_units
+                
+                # Update cash position with proceeds
+                proceeds = group.apply(
+                    lambda x: abs(x['amount']) if pd.notna(x['amount']) and x['amount']!=0 
+                    else (x['units'] * x['price'] - x['fee']),
+                    axis=1
+                ).sum()
                 holdings['CASH EQUIVALENTS']['units'] += proceeds
-                
-            elif transaction_type == 'transfer':
-                if row['security_type'] == 'cash':
-                    holdings['CASH EQUIVALENTS']['units'] += row['amount'] if pd.notna(row['amount']) and row['amount']!=0 else row['units']
-                    
-            elif transaction_type == 'dividend':
-                holdings['CASH EQUIVALENTS']['units'] += abs(row['amount']) if pd.notna(row['amount']) and row['amount']!=0 else row['units']
-                
-            elif transaction_type == 'interest':
-                holdings['CASH EQUIVALENTS']['units'] += abs(row['amount']) if pd.notna(row['amount']) and row['amount']!=0 else row['units']
-                
-            # Handle option transactions
-            elif transaction_type in ['sell_to_open', 'sell_to_close', 'buy_to_open', 'buy_to_close']:
-                premium = abs(row['amount']) if pd.notna(row['amount']) and row['amount']!= 0 else (row['units'] * row['price'] - row['fee'])
-                if transaction_type in ['sell_to_open', 'sell_to_close']:
+
+            elif txn_type.lower() == 'transfer' and group.iloc[0]['security_type'] == 'cash':
+                # Handle cash transfers
+                transfer_amount = group.apply(
+                    lambda x: x['amount'] if pd.notna(x['amount']) and x['amount']!=0 
+                    else x['units'],
+                    axis=1
+                ).sum()
+                holdings['CASH EQUIVALENTS']['units'] += transfer_amount
+            
+            elif txn_type.lower() in ['dividend', 'interest']:
+                # Handle dividend and interest income
+                income_amount = group.apply(
+                    lambda x: abs(x['amount']) if pd.notna(x['amount']) and x['amount']!=0 
+                    else x['units'],
+                    axis=1
+                ).sum()
+                holdings['CASH EQUIVALENTS']['units'] += income_amount
+            
+            elif txn_type.lower() in ['sell_to_open', 'sell_to_close', 'buy_to_open', 'buy_to_close']:
+                # Handle option transactions
+                premium = group.apply(
+                    lambda x: abs(x['amount']) if pd.notna(x['amount']) and x['amount']!=0 
+                    else (x['units'] * x['price'] - x['fee']),
+                    axis=1
+                ).sum()
+                if txn_type.lower() in ['sell_to_open', 'sell_to_close']:
                     holdings['CASH EQUIVALENTS']['units'] += premium
                 else:
                     holdings['CASH EQUIVALENTS']['units'] -= premium
+            
+            elif txn_type.lower() == 'split' and group.iloc[0]['security_type'] == 'stock':
+                # Handle stock splits
+                split_units = group[pd.notna(group['units']) & (group['units'] != 0)]['units'].sum()
+                holdings[symbol]['units'] += split_units
 
-            # Fidelity logic, adjust stock units for stock splits
-            elif transaction_type == 'split' and row['security_type'] == 'stock':
-                if pd.notna(row['units']) and row['units'] != 0:
-                    holdings[symbol]['units'] += row['units']
-        
         # Update cash position cost basis
         holdings['CASH EQUIVALENTS']['cost_basis'] = holdings['CASH EQUIVALENTS']['units']
         
         # Calculate market values and weights
-        holdings = self._calculate_portfolio_values(holdings, calc_date=as_of_date)
-        #print("final: ", holdings['CASH EQUIVALENTS']['units'])
-
-        return holdings
+        holdings = self._calculate_portfolio_values(holdings, prices_df, calc_date)
         
-    def calculate_gain_loss(self, df: pd.DataFrame) -> dict:
+        return holdings
+
+    def calculate_gain_loss(self, df: pd.DataFrame, user_id: str = None) -> dict:
         """Calculate realized and unrealized gains/losses for all positions"""
         if df.empty:
             return {}
             
-        # Get current holdings first
-        holdings = self.calculate_stock_holdings(df)
+        # Pre-process transactions
+        processed_df = self.transaction_manager.preprocess_transactions(df.copy(), user_id=user_id)
+        
+        # Get current holdings first (use single date mode)
+        holdings = self.calculate_stock_holdings(processed_df, start_date=datetime.now().date(),user_id=user_id)
         
         # Initialize gain/loss tracking
         gain_loss = {}
         
         # Process each symbol
-        for symbol in set(df['stock'].unique()):
-            symbol_txns = df[df['stock'] == symbol].sort_values('date')
+        for symbol in set(processed_df['stock'].unique()):
+            symbol_txns = processed_df[processed_df['stock'] == symbol].sort_values('date')
             
             # Initialize tracking variables
             running_units = 0
@@ -309,155 +428,12 @@ class FinanceCalculator:
         
         return gain_loss
         
-    def calculate_stock_holdings_batch(self, df: pd.DataFrame, start_date: date, end_date: date, freq: str = 'W') -> dict:
-        """Calculate stock holdings for multiple dates efficiently using batch price downloads
-        
-        Args:
-            df: Transaction DataFrame
-            start_date: Start date for calculations
-            end_date: End date for calculations
-            freq: Frequency for calculations ('D' for daily, 'W' for weekly, 'M' for monthly)
-            
-        Returns:
-            Dictionary with dates as keys and holdings dictionaries as values
-        """
-        if df.empty:
-            return {}
-
-        # Generate dates at specified frequency
-        date_range = pd.date_range(start=start_date, end=end_date, freq=freq)
-
-        if date_range.empty:
-            return {}
-        
-        # Get unique symbols from transactions, keeping FIXED INCOME but excluding CASH
-        symbols = set(df['stock'].unique()) - {'CASH EQUIVALENTS'}
-        if not symbols:  # If no symbols to price
-            self.logger.info("No symbols requiring price data")
-            return self._calculate_holdings_without_prices(df, date_range)
-            
-        # Convert symbols to list and sort for consistency
-        # Filter out FIXED INCOME from symbols requiring price download
-        price_symbols = sorted(list(symbols - {'FIXED INCOME'}))
-
-        # Batch download prices only for non-fixed income securities
-        prices_df = pd.DataFrame()
-        if price_symbols:
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    prices_df = yf.download(
-                        price_symbols,
-                        start=start_date - timedelta(days=5),
-                        end=end_date + timedelta(days=1),
-                        progress=False,
-                        interval='1d',
-                        group_by='ticker'
-                    )
-                    
-                # Process prices DataFrame based on number of symbols
-                if len(price_symbols) == 1:
-                    symbol = price_symbols[0]
-                    if isinstance(prices_df, pd.DataFrame) and 'Close' in prices_df.columns:
-                        prices_df = pd.DataFrame({symbol: prices_df['Close']})
-                else:
-                    if isinstance(prices_df, pd.DataFrame) and isinstance(prices_df.columns, pd.MultiIndex):
-                        prices_df = prices_df.xs('Close', axis=1, level=1, drop_level=True)
-                        
-            except Exception as e:
-                self.logger.error(f"Error in batch price download: {str(e)}")
-                return {}
-      
-        self.logger.debug(f"Successfully downloaded prices for {len(price_symbols)} symbols")
-        
-        holdings_by_date = {}
-        
-        # Calculate holdings for each date
-        for calc_date in date_range:
-            calc_date = calc_date.date()
- 
-            # Filter transactions up to this date
-            transactions_to_date = df[pd.to_datetime(df['date']).dt.date <= calc_date].copy()
-            
-            holdings = {}
-            total_market_value = 0.0
-            
-            # Initialize cash position
-            holdings['CASH EQUIVALENTS'] = {
-                'units': 0.0,
-                'security_type': 'cash',
-                'cost_basis': 0.0,
-                'last_price': 1.0,
-                'last_update': calc_date
-            }
-            
-            # Process transactions chronologically
-            for _, row in transactions_to_date.sort_values('date').iterrows():
-                symbol = row['stock']
-                transaction_type = row['transaction_type'].lower()
-                
-                # Initialize holding if not exists
-                if symbol not in holdings and symbol != 'CASH EQUIVALENTS':
-                    holdings[symbol] = {
-                        'units': 0.0,
-                        'security_type': row['security_type'],
-                        'cost_basis': 0.0,
-                        'last_price': 0.0,
-                        'last_update': row['date']
-                    }
-                
-                # Process transaction based on type
-                if transaction_type in ['buy', 'reinvest', 'stock_transfer']: 
-                    if pd.notna(row['units']) and pd.notna(row['price']):
-                        holdings[symbol]['units'] += row['units']
-                        holdings[symbol]['cost_basis'] += (row['units'] * row['price'] + row['fee'])
-                    if transaction_type != 'stock_transfer':  # Don't affect cash for stock_transfer
-                        total_cost = abs(row['amount']) if pd.notna(row['amount']) and row['amount']!=0 else (row['units'] * row['price'] + row['fee'])
-                        holdings['CASH EQUIVALENTS']['units'] -= total_cost
-                    
-                elif transaction_type == 'sell':
-                    if pd.notna(row['units']) and pd.notna(row['price']):
-                        if holdings[symbol]['units'] > 0:
-                            cost_per_unit = holdings[symbol]['cost_basis'] / holdings[symbol]['units']
-                            holdings[symbol]['cost_basis'] -= (row['units'] * cost_per_unit)
-                        holdings[symbol]['units'] -= row['units']
-                    proceeds = abs(row['amount']) if pd.notna(row['amount']) and row['amount'] != 0 else (row['units'] * row['price'] - row['fee'])
-                    holdings['CASH EQUIVALENTS']['units'] += proceeds
-                    
-                elif transaction_type == 'transfer':
-                    if row['security_type'] == 'cash':
-                        holdings['CASH EQUIVALENTS']['units'] += row['amount'] if pd.notna(row['amount']) and row['amount']!=0 else row['units']
-                        
-                elif transaction_type == 'dividend':
-                    holdings['CASH EQUIVALENTS']['units'] += abs(row['amount']) if pd.notna(row['amount']) and row['amount']!=0 else row['units']
-                    
-                elif transaction_type == 'interest':
-                    holdings['CASH EQUIVALENTS']['units'] += abs(row['amount']) if pd.notna(row['amount']) and row['amount']!=0 else row['units']
-                    
-                elif transaction_type in ['sell_to_open', 'sell_to_close', 'buy_to_open', 'buy_to_close']:
-                    premium = abs(row['amount']) if pd.notna(row['amount']) and row['amount'] != 0 else (row['units'] * row['price'] - row['fee'])
-                    if transaction_type in ['sell_to_open', 'sell_to_close']:
-                        holdings['CASH EQUIVALENTS']['units'] += premium
-                    else:
-                        holdings['CASH EQUIVALENTS']['units'] -= premium
-            
-                # Fidelity logic, adjust stock units for stock splits
-                elif transaction_type == 'split' and row['security_type'] == 'stock':
-                    if pd.notna(row['units']) and row['units'] != 0:
-                        holdings[symbol]['units'] += row['units']
-
-            # Update cash position cost basis
-            holdings['CASH EQUIVALENTS']['cost_basis'] = holdings['CASH EQUIVALENTS']['units']
-            
-            # Calculate market values and weights
-            holdings = self._calculate_portfolio_values(holdings, prices_df, calc_date)
-            
-            holdings_by_date[calc_date] = holdings
-
-        return holdings_by_date
-        
-    def _calculate_holdings_without_prices(self, df: pd.DataFrame, date_range: pd.DatetimeIndex) -> dict:
+    def _calculate_holdings_without_prices(self, df: pd.DataFrame, date_range: pd.DatetimeIndex, user_id: str = None) -> dict:
         """Helper method to calculate holdings when there are no symbols requiring prices"""
+        if user_id is None:
+            self.logger.warning("No user_id provided for holdings calculation")
+            user_id = "default"
+        
         holdings_by_date = {}
         
         for calc_date in date_range:
@@ -489,7 +465,7 @@ class FinanceCalculator:
             
         return holdings_by_date
         
-    def calculate_performance(self, df: pd.DataFrame) -> dict:
+    def calculate_performance(self, df: pd.DataFrame, user_id: str = None) -> dict:
         """Calculate portfolio performance metrics over time using weekly intervals"""
         if df.empty:
             return {
@@ -506,8 +482,9 @@ class FinanceCalculator:
         start_date = pd.to_datetime(df['date'].min()).date()
         end_date = pd.to_datetime(df['date'].max()).date()
         
-        # Calculate holdings for all weeks
-        holdings_by_date = self.calculate_stock_holdings_batch(df, start_date, end_date, freq='W')
+        # Calculate holdings for all weeks with user_id
+        holdings_by_date = self.calculate_stock_holdings(df, start_date, end_date, freq='W', user_id=user_id)
+        
         if not holdings_by_date:
             return {
                 'dates': [],
