@@ -7,6 +7,7 @@ import warnings
 from typing import Dict, List, Tuple
 from .price_service import PriceManager
 from .transaction_service import TransactionManager
+from .metrics_service import MetricsCache
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ class FinanceCalculator:
         self.price_manager = PriceManager()  # Initialize price manager
         self.holdings_cache = HoldingsCache()
         self.transaction_manager = TransactionManager()  # Add transaction manager
+        self.metrics_cache = MetricsCache()
 
     def get_current_price(self, symbol: str, as_of_date: date = None) -> float:
         """Get stock price from cache or Yahoo Finance"""
@@ -475,12 +477,21 @@ class FinanceCalculator:
                 'metrics': {}
             }
             
-        # Sort transactions by date
-        df = df.sort_values('date')
-        
+        if user_id is None:
+            self.logger.warning("No user_id provided for performance calculation")
+            user_id = "default"
+            
         # Get date range
         start_date = pd.to_datetime(df['date'].min()).date()
         end_date = pd.to_datetime(df['date'].max()).date()
+        
+        # Check cache first
+        cached_metrics = self.metrics_cache.get(user_id, 'performance', start_date, end_date)
+        if cached_metrics:
+            return cached_metrics
+        
+        # Sort transactions by date
+        df = df.sort_values('date')
         
         # Calculate holdings for all weeks with user_id
         holdings_by_date = self.calculate_stock_holdings(df, start_date, end_date, freq='W', user_id=user_id)
@@ -575,9 +586,14 @@ class FinanceCalculator:
                 }
         
         # Ensure all values are JSON serializable
-        return {
+        result = {
             'dates': [d.strftime('%Y-%m-%d') for d in dates],
             'portfolio_values': [float(np.clip(v, -1e300, 1e300)) for v in values],
             'invested_amounts': [float(np.clip(v, -1e300, 1e300)) for v in invested],
             'metrics': metrics
         }
+        
+        # Cache the results before returning
+        self.metrics_cache.set(user_id, 'performance', start_date, end_date, result)
+        
+        return result
