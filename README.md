@@ -21,6 +21,23 @@ A web application that helps you analyze and visualize your stock portfolio by c
 
 ### Backend
 
+You can set up the backend environment using either Conda or virtualenv.
+
+#### Using Conda
+
+1. Create a new Conda environment:
+```bash
+conda create -n portfolio-viz python=3.9
+conda activate portfolio-viz
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+#### Using virtualenv (Alternative)
+
 1. Create a virtual environment:
 ```bash
 python -m venv venv
@@ -82,4 +99,4 @@ The packaged application will be available in the `dist` directory.
 
 ## License
 
-MIT 
+MIT

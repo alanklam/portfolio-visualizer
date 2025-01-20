@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, date
 import sqlite3
 import logging
 import warnings
+import holidays
 from pathlib import Path
 from ..core.cache_config import get_cache_path
 
@@ -17,9 +18,10 @@ class PriceManager:
         self.logger = logging.getLogger(__name__)
         self._memory_cache = {}
         self._last_download_time = {}
-        self._download_interval = timedelta(minutes=15)
+        self._download_interval = timedelta(days=365)
         self.db_path = get_cache_path()
         self._init_db()
+        self._us_holidays = holidays.US(years=range(2000, datetime.now().year + 2))
     
     def _init_db(self):
         """Initialize SQLite database for price caching"""
@@ -52,6 +54,23 @@ class PriceManager:
             # Check SQLite cache
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute(
+                    """
+                    SELECT price, updated_at FROM price_cache 
+                    WHERE symbol = ? AND date = ? AND 
+                    (julianday(updated_at) - julianday(date)) >= 1
+                    """,
+                    (symbol, as_of_date.isoformat())
+                )
+                result = cursor.fetchone()
+                
+                if result:
+                    # If price was updated at least 1 day after the date, consider it final
+                    self._memory_cache[cache_key] = result[0]
+                    self._last_download_time[cache_key] = datetime.fromisoformat(result[1])
+                    return result[0]
+                
+                # Check for non-finalized cached price
+                cursor = conn.execute(
                     "SELECT price, updated_at FROM price_cache WHERE symbol = ? AND date = ?",
                     (symbol, as_of_date.isoformat())
                 )
@@ -62,7 +81,7 @@ class PriceManager:
                     self._last_download_time[cache_key] = datetime.fromisoformat(result[1])
                     return result[0]
             
-            # If not in cache, download
+            # If not in cache or cache expired, download
             price = self._download_single_price(symbol, as_of_date)
             
             # Update both caches
@@ -78,7 +97,7 @@ class PriceManager:
             return price
             
         except Exception as e:
-            self.logger.error(f"Error getting price for {symbol}: {e}")
+            self.logger.error(f"(price manager) Error getting price for {symbol}: {e}")
             return 0.0
     
     def get_prices_batch(self, symbols: list, start_date: date, end_date: date) -> pd.DataFrame:
@@ -87,6 +106,9 @@ class PriceManager:
             # Initialize result DataFrame
             prices_df = pd.DataFrame()
             symbols_to_download = []
+            
+            # Get required trading days
+            required_dates = self._get_trading_days(start_date, end_date)
             
             # Check cache for each symbol
             with sqlite3.connect(self.db_path) as conn:
@@ -103,9 +125,13 @@ class PriceManager:
                         parse_dates=['date']
                     )
                     
-                    if len(df) == (end_date - start_date).days + 1:
-                        # If we have all dates in cache, use cached data
-                        prices_df[symbol] = df.set_index('date')['price']
+                    # Check if we have all required trading days
+                    if not df.empty:
+                        dates_covered = set(df['date'].dt.date)
+                        if required_dates.issubset(dates_covered):
+                            prices_df[symbol] = df.set_index('date')['price']
+                        else:
+                            symbols_to_download.append(symbol)
                     else:
                         symbols_to_download.append(symbol)
             
@@ -113,19 +139,20 @@ class PriceManager:
                 # Download missing data
                 downloaded_df = self._download_prices_batch(
                     symbols_to_download,
-                    start_date - timedelta(days=5),
+                    start_date - timedelta(days=5),  # Add buffer for market holidays
                     end_date + timedelta(days=1)
                 )
                 
                 if not downloaded_df.empty:
                     # Update cache with new data
+                    current_time = datetime.now().isoformat()
                     with sqlite3.connect(self.db_path) as conn:
                         for symbol in symbols_to_download:
                             if symbol in downloaded_df.columns:
                                 for idx, price in downloaded_df[symbol].items():
                                     conn.execute(
                                         "INSERT OR REPLACE INTO price_cache (symbol, date, price, updated_at) VALUES (?, ?, ?, ?)",
-                                        (symbol, idx.date().isoformat(), float(price), datetime.now().isoformat())
+                                        (symbol, idx.date().isoformat(), float(price), current_time)
                                     )
                     
                     # Merge downloaded data with cached data
@@ -140,8 +167,12 @@ class PriceManager:
     def _download_single_price(self, symbol: str, as_of_date: date) -> float:
         """Download price for a single symbol and date"""
         try:
+            # If not a trading day, look for the previous trading day
+            while not self._is_trading_day(as_of_date):
+                as_of_date = as_of_date - timedelta(days=1)
+            
             end_date = as_of_date + timedelta(days=1)
-            start_date = as_of_date - timedelta(days=5)
+            start_date = as_of_date - timedelta(days=5)  # Buffer for holidays
             
             df = yf.download(
                 symbol,
@@ -194,3 +225,15 @@ class PriceManager:
         except Exception as e:
             self.logger.error(f"Error in batch download: {e}")
             return pd.DataFrame()
+    
+    def _is_trading_day(self, day: date) -> bool:
+        """Check if given date is a trading day"""
+        return (
+            day.weekday() < 5 and  # Monday = 0, Friday = 4
+            day not in self._us_holidays
+        )
+        
+    def _get_trading_days(self, start_date: date, end_date: date) -> set:
+        """Get all trading days between start_date and end_date"""
+        business_days = pd.date_range(start=start_date, end=end_date, freq='B')
+        return {d.date() for d in business_days if d.date() not in self._us_holidays}

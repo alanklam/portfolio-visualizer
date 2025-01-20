@@ -1,9 +1,7 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, date
-import yfinance as yf
 import logging
-import warnings
 from typing import Dict, List, Tuple
 from .price_service import PriceManager
 from .transaction_service import TransactionManager
@@ -118,11 +116,17 @@ class FinanceCalculator:
                     # Get historical price from batch data
                     try:
                         price_series = prices_df[symbol] if symbol in prices_df.columns else pd.Series()
-                        mask = price_series.index <= pd.Timestamp(calc_date)
-                        if not price_series.empty and mask.any():
-                            data['last_price'] = float(price_series[mask].iloc[-1])
+                        if not price_series.empty:
+                            # Convert calc_date to Timestamp and find the last valid price
+                            calc_timestamp = pd.Timestamp(calc_date)
+                            valid_prices = price_series[price_series.index <= calc_timestamp]
+                            if not valid_prices.empty:
+                                data['last_price'] = float(valid_prices.iloc[-1])
+                            else:
+                                self.logger.warning(f"No price found for {symbol} on {calc_date}")
+                                data['last_price'] = 0.0
                         else:
-                            self.logger.warning(f"No price found for {symbol} on {calc_date}")
+                            self.logger.warning(f"No price series found for {symbol}")
                             data['last_price'] = 0.0
                     except Exception as e:
                         self.logger.error(f"Error getting price for {symbol}: {str(e)}")
@@ -137,7 +141,7 @@ class FinanceCalculator:
         
         # Calculate weights
         for data in holdings.values():
-            data['weight'] = (data['market_value'] / total_market_value) if total_market_value > 0 else 0.0
+            data['weight'] = (data['market_value'] / total_market_value) if total_market_value != 0 else 0.0
             for key in ['units', 'cost_basis', 'last_price', 'market_value', 'weight']:
                 data[key] = float(data[key])
         
@@ -184,7 +188,7 @@ class FinanceCalculator:
 
         # Get symbols requiring prices
         price_symbols = processor.get_symbols_requiring_prices()
-
+        # print("symbols:  ", price_symbols)
         # Get prices in batch
         prices_df = pd.DataFrame()
         if price_symbols:
@@ -194,6 +198,7 @@ class FinanceCalculator:
                     start_date - timedelta(days=5),
                     end_date + timedelta(days=1) if end_date else start_date + timedelta(days=1)
                 )
+                
             except Exception as e:
                 self.logger.error(f"Error in batch price download: {str(e)}")
                 return {} if end_date is None else {start_date: {}}
@@ -274,15 +279,14 @@ class FinanceCalculator:
             
             elif txn_type.lower() == 'sell':
                 mask = pd.notna(group['units']) & pd.notna(group['price'])
-                # if holdings[symbol]['units'] > 0: #comment out logic for debugging
                 sell_units = group[mask]['units'].sum()
                 if sell_units > 0:
                     # Calculate cost basis per unit
-                    cost_per_unit = holdings[symbol]['cost_basis'] / holdings[symbol]['units']
+                    cost_per_unit = holdings[symbol]['cost_basis'] / holdings[symbol]['units'] if holdings[symbol]['units'] != 0 else 0
                     # Adjust cost basis
                     holdings[symbol]['cost_basis'] -= (sell_units * cost_per_unit)
                     holdings[symbol]['units'] -= sell_units
-                
+
                 # Update cash position with proceeds
                 proceeds = group.apply(
                     lambda x: abs(x['amount']) if pd.notna(x['amount']) and x['amount']!=0 
@@ -368,7 +372,7 @@ class FinanceCalculator:
                 elif txn['transaction_type'].lower() == 'sell':
                     if running_units > 0:
                         # Calculate cost basis per unit
-                        cost_per_unit = total_cost_basis / running_units
+                        cost_per_unit = total_cost_basis / running_units if running_units != 0 else 0
                         # Calculate realized gain/loss
                         realized_gain_loss += (txn['units'] * (txn['price'] - cost_per_unit) - txn['fee'])
                         # Adjust cost basis
@@ -419,11 +423,11 @@ class FinanceCalculator:
                 'adjusted_cost_basis': adjusted_cost_basis,
                 'realized_gain_loss': realized_gain_loss,
                 'unrealized_gain_loss': unrealized_gain_loss,
-                'unrealized_gain_loss_pct': (unrealized_gain_loss / total_cost_basis) if total_cost_basis > 0 else 0,
+                'unrealized_gain_loss_pct': (unrealized_gain_loss / total_cost_basis) if total_cost_basis != 0 else 0,
                 'dividend_income': dividend_income,
                 'option_gain_loss': option_gain_loss,
                 'total_return': total_return,
-                'total_return_pct': (total_return / total_cost_basis) if total_cost_basis > 0 else 0,
+                'total_return_pct': (total_return / total_cost_basis) if total_cost_basis != 0 else 0,
                 'last_price': current_holding['last_price'],
                 'last_update': current_holding['last_update']
             }
