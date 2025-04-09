@@ -97,7 +97,7 @@ class PriceManager:
             return price
             
         except Exception as e:
-            self.logger.error(f"(price manager) Error getting price for {symbol}: {e}")
+            self.logger.error(f"Error in get_price for {symbol}: {str(e)}")
             return 0.0
     
     def get_prices_batch(self, symbols: list, start_date: date, end_date: date) -> pd.DataFrame:
@@ -161,7 +161,7 @@ class PriceManager:
             return prices_df
             
         except Exception as e:
-            self.logger.error(f"Error in batch price download: {e}")
+            self.logger.error(f"Error in get_prices_batch: {str(e)}")
             return pd.DataFrame()
     
     def _download_single_price(self, symbol: str, as_of_date: date) -> float:
@@ -173,6 +173,9 @@ class PriceManager:
             
             end_date = as_of_date + timedelta(days=1)
             start_date = as_of_date - timedelta(days=5)  # Buffer for holidays
+
+            # Log yf.download parameters
+            self.logger.info(f"Calling yf.download with params: symbol={symbol}, start={start_date}, end={end_date}, interval=1d")
             
             df = yf.download(
                 symbol,
@@ -183,6 +186,7 @@ class PriceManager:
             )
             
             if df.empty:
+                self.logger.warning(f"yf.download returned empty DataFrame for {symbol}")
                 return 0.0
                 
             df = df[df.index <= pd.Timestamp(as_of_date)]
@@ -192,7 +196,7 @@ class PriceManager:
             return 0.0
             
         except Exception as e:
-            self.logger.error(f"Error downloading price for {symbol}: {e}")
+            self.logger.error(f"Error in _download_single_price for {symbol}: {str(e)}")
             return 0.0
     
     def _download_prices_batch(self, symbols: list, start_date: date, end_date: date) -> pd.DataFrame:
@@ -201,6 +205,9 @@ class PriceManager:
             if not symbols:
                 return pd.DataFrame()
                 
+            # Log yf.download parameters
+            self.logger.info(f"Calling yf.download batch with params: symbols={symbols}, start={start_date}, end={end_date}, interval=1d")
+
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 df = yf.download(
@@ -223,7 +230,7 @@ class PriceManager:
             return df
             
         except Exception as e:
-            self.logger.error(f"Error in batch download: {e}")
+            self.logger.error(f"Error in _download_prices_batch: {str(e)}")
             return pd.DataFrame()
     
     def _is_trading_day(self, day: date) -> bool:

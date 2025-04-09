@@ -34,7 +34,7 @@ class MetricsCache:
                     )
                 """)
         except Exception as e:
-            self.logger.error(f"Error initializing metrics cache DB: {e}")
+            self.logger.error(f"Error in _init_db initializing metrics cache DB: {e}")
     
     def get(self, user_id: str, metric_type: str, start_date: date, end_date: date) -> Optional[Dict]:
         """Get cached metrics if not expired"""
@@ -65,7 +65,7 @@ class MetricsCache:
                     return metric_data
                     
         except Exception as e:
-            self.logger.error(f"Error retrieving cached metrics: {e}")
+            self.logger.error(f"Error in get retrieving cached metrics for {user_id}/{metric_type}: {e}")
         
         return None
     
@@ -95,7 +95,7 @@ class MetricsCache:
                 ))
                 
         except Exception as e:
-            self.logger.error(f"Error storing metrics in cache: {e}")
+            self.logger.error(f"Error in set storing metrics in cache for {user_id}/{metric_type}: {e}")
     
     def clear_expired(self):
         """Clear expired cache entries"""
@@ -117,4 +117,4 @@ class MetricsCache:
             }
             
         except Exception as e:
-            self.logger.error(f"Error clearing expired cache: {e}")
+            self.logger.error(f"Error in clear_expired clearing expired cache: {e}")
